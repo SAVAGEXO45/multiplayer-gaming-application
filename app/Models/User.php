@@ -35,12 +35,20 @@ use Laravel\Sanctum\HasApiTokens;
  * @property Carbon|null $created_at
  * @property Carbon|null $updated_at
  */
-#[Fillable(['name', 'username', 'email', 'password', 'avatar_path', 'bio'])]
+#[Fillable(['name', 'username', 'email', 'password', 'avatar_path', 'bio', 'role', 'is_suspended', 'suspended_at', 'suspension_reason', 'last_seen_at'])]
 #[Hidden(['password', 'two_factor_secret', 'two_factor_recovery_codes', 'remember_token'])]
 class User extends Authenticatable implements MustVerifyEmail, PasskeyUser
 {
     /** @use HasFactory<UserFactory> */
     use HasApiTokens, HasFactory, Notifiable, PasskeyAuthenticatable, TwoFactorAuthenticatable;
+
+    /**
+     * @var array<string, mixed>
+     */
+    protected $attributes = [
+        'role' => 'player',
+        'is_suspended' => false,
+    ];
 
     protected function casts(): array
     {

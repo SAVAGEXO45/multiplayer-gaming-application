@@ -72,9 +72,38 @@ class LeaderboardService
      */
     public function forPeriod(string $period, ?Game $game = null, int $limit = 50): array
     {
+        if ($period === 'all' && $game !== null) {
+            return $this->gameAllTime($game, $limit);
+        }
+
         return $period === 'all'
             ? $this->global($limit)
             : $this->period($period, $game, $limit);
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    public function gameAllTime(Game $game, int $limit = 50): array
+    {
+        $rows = GameResult::query()
+            ->join('users', 'users.id', '=', 'game_results.user_id')
+            ->where('users.is_suspended', false)
+            ->where('game_results.game_id', $game->id)
+            ->selectRaw('game_results.user_id, users.username, users.name, users.avatar_path,
+                COUNT(*) as games_played,
+                SUM(CASE WHEN game_results.result = ? THEN 1 ELSE 0 END) as wins,
+                SUM(CASE WHEN game_results.result = ? THEN 1 ELSE 0 END) as losses,
+                SUM(CASE WHEN game_results.result = ? THEN 1 ELSE 0 END) as draws,
+                SUM(game_results.points_awarded) as points', ['win', 'loss', 'draw'])
+            ->groupBy('game_results.user_id', 'users.username', 'users.name', 'users.avatar_path')
+            ->orderByDesc('points')
+            ->orderByDesc('wins')
+            ->orderByDesc('games_played')
+            ->limit($limit)
+            ->get();
+
+        return $this->formatRows($rows);
     }
 
     public function rankOf(User $user, string $period = 'all', ?Game $game = null): ?int

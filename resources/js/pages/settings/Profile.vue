@@ -36,14 +36,44 @@ const user = computed(() => page.props.auth.user);
         <Heading
             variant="small"
             title="Profile"
-            description="Update your name and email address"
+            description="Update your public identity, avatar and bio"
         />
 
         <Form
             v-bind="ProfileController.update.form()"
             class="space-y-6"
+            force-form-data
             v-slot="{ errors, processing }"
         >
+            <div class="flex items-center gap-4">
+                <img
+                    v-if="user.avatar_url"
+                    :src="user.avatar_url"
+                    :alt="user.name"
+                    class="size-16 rounded-2xl border border-white/10 object-cover"
+                />
+                <div
+                    v-else
+                    class="flex size-16 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-lg font-bold text-white"
+                >
+                    {{ user.name.charAt(0) }}
+                </div>
+                <div class="grid gap-1">
+                    <Label for="avatar">Avatar</Label>
+                    <input
+                        id="avatar"
+                        type="file"
+                        name="avatar"
+                        accept="image/png,image/jpeg,image/webp"
+                        class="text-sm text-slate-400 file:mr-3 file:rounded-lg file:border-0 file:bg-white/10 file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-white hover:file:bg-white/15"
+                    />
+                    <p class="text-xs text-muted-foreground">
+                        JPG, PNG or WebP, up to 2 MB.
+                    </p>
+                    <InputError :message="errors.avatar" />
+                </div>
+            </div>
+
             <div class="grid gap-2">
                 <Label for="name">Name</Label>
                 <Input
@@ -56,6 +86,34 @@ const user = computed(() => page.props.auth.user);
                     placeholder="Full name"
                 />
                 <InputError class="mt-2" :message="errors.name" />
+            </div>
+
+            <div class="grid gap-2">
+                <Label for="username">Gamer tag</Label>
+                <Input
+                    id="username"
+                    class="mt-1 block w-full"
+                    name="username"
+                    :default-value="user.username"
+                    required
+                    autocomplete="username"
+                    placeholder="pixel_hero"
+                />
+                <InputError class="mt-2" :message="errors.username" />
+            </div>
+
+            <div class="grid gap-2">
+                <Label for="bio">Bio</Label>
+                <textarea
+                    id="bio"
+                    name="bio"
+                    rows="3"
+                    maxlength="280"
+                    :value="user.bio ?? ''"
+                    class="mt-1 block w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                    placeholder="Tell the arcade who you are"
+                />
+                <InputError class="mt-2" :message="errors.bio" />
             </div>
 
             <div class="grid gap-2">

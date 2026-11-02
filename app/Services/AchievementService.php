@@ -76,9 +76,13 @@ class AchievementService
         return $unlocked;
     }
 
-    private function currentValue(User $user, Achievement $achievement): int
+    public function progress(User $user, Achievement $achievement): int
     {
-        $statistics = PlayerStatistics::query()->firstOrCreate(['user_id' => $user->id]);
+        return $this->currentValue($user, $achievement);
+    }
+
+    private function currentValue(User $user, Achievement $achievement): int
+    {        $statistics = PlayerStatistics::query()->firstOrCreate(['user_id' => $user->id]);
 
         return match ($achievement->criteria_type) {
             AchievementCriteria::Wins->value => (int) $statistics->wins,

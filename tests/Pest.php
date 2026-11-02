@@ -1,5 +1,6 @@
 <?php
 
+use App\Models\Game;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
@@ -44,7 +45,58 @@ expect()->extend('toBeOne', function () {
 |
 */
 
-function something()
+/**
+ * Create a seeded-equivalent game for the given engine slug.
+ *
+ * @param  array<string, mixed>  $attributes
+ */
+function createGame(string $slug, array $attributes = []): Game
 {
-    // ..
+    $presets = [
+        'tic-tac-toe' => [
+            'name' => 'Tic-Tac-Toe',
+            'icon' => 'grid-3x3',
+            'accent' => 'cyan',
+            'min_players' => 1,
+            'max_players' => 2,
+            'supports_multiplayer' => true,
+            'points_win' => 100,
+            'points_draw' => 40,
+            'points_loss' => -10,
+            'points_participation' => 5,
+            'sort_order' => 1,
+        ],
+        'rock-paper-scissors' => [
+            'name' => 'Rock Paper Scissors',
+            'icon' => 'swords',
+            'accent' => 'violet',
+            'min_players' => 1,
+            'max_players' => 2,
+            'supports_multiplayer' => true,
+            'points_win' => 120,
+            'points_draw' => 50,
+            'points_loss' => -10,
+            'points_participation' => 5,
+            'sort_order' => 2,
+        ],
+        'number-guess' => [
+            'name' => 'Number Guess',
+            'icon' => 'hash',
+            'accent' => 'amber',
+            'min_players' => 1,
+            'max_players' => 1,
+            'supports_multiplayer' => false,
+            'points_win' => 150,
+            'points_draw' => 0,
+            'points_loss' => 0,
+            'points_participation' => 10,
+            'sort_order' => 3,
+        ],
+    ];
+
+    return Game::factory()->create(array_merge(
+        ['slug' => $slug, 'is_active' => true],
+        $presets[$slug] ?? [],
+        $attributes,
+    ));
 }

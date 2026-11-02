@@ -1,8 +1,16 @@
 <script setup lang="ts">
-import { Link } from '@inertiajs/vue3';
-import { BookOpen, FolderGit2, LayoutGrid } from '@lucide/vue';
+import { Link, usePage } from '@inertiajs/vue3';
+import {
+    Gift,
+    Gamepad2,
+    LayoutDashboard,
+    Medal,
+    ShieldCheck,
+    Trophy,
+    Users,
+} from '@lucide/vue';
+import { computed } from 'vue';
 import AppLogo from '@/components/AppLogo.vue';
-import NavFooter from '@/components/NavFooter.vue';
 import NavMain from '@/components/NavMain.vue';
 import NavUser from '@/components/NavUser.vue';
 import {
@@ -14,28 +22,27 @@ import {
     SidebarMenuButton,
     SidebarMenuItem,
 } from '@/components/ui/sidebar';
-import { dashboard } from '@/routes';
 import type { NavItem } from '@/types';
 
+const page = usePage();
+const isAdmin = computed(() => Boolean(page.props.auth.user?.is_admin));
+
 const mainNavItems: NavItem[] = [
-    {
-        title: 'Dashboard',
-        href: dashboard(),
-        icon: LayoutGrid,
-    },
+    { title: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
+    { title: 'Games', href: '/games', icon: Gamepad2 },
+    { title: 'Rooms', href: '/rooms', icon: Users },
+    { title: 'Leaderboard', href: '/leaderboard', icon: Trophy },
+    { title: 'Achievements', href: '/achievements', icon: Medal },
+    { title: 'Rewards', href: '/rewards', icon: Gift },
 ];
 
-const footerNavItems: NavItem[] = [
-    {
-        title: 'Repository',
-        href: 'https://github.com/laravel/vue-starter-kit',
-        icon: FolderGit2,
-    },
-    {
-        title: 'Documentation',
-        href: 'https://laravel.com/docs/starter-kits#vue',
-        icon: BookOpen,
-    },
+const adminNavItems: NavItem[] = [
+    { title: 'Admin overview', href: '/admin', icon: ShieldCheck },
+    { title: 'Users', href: '/admin/users', icon: Users },
+    { title: 'Games', href: '/admin/games', icon: Gamepad2 },
+    { title: 'Rooms', href: '/admin/rooms', icon: LayoutDashboard },
+    { title: 'Rewards', href: '/admin/rewards', icon: Gift },
+    { title: 'Activity', href: '/admin/activity', icon: Medal },
 ];
 </script>
 
@@ -45,7 +52,7 @@ const footerNavItems: NavItem[] = [
             <SidebarMenu>
                 <SidebarMenuItem>
                     <SidebarMenuButton size="lg" as-child>
-                        <Link :href="dashboard()">
+                        <Link href="/dashboard">
                             <AppLogo />
                         </Link>
                     </SidebarMenuButton>
@@ -54,11 +61,15 @@ const footerNavItems: NavItem[] = [
         </SidebarHeader>
 
         <SidebarContent>
-            <NavMain :items="mainNavItems" />
+            <NavMain :items="mainNavItems" label="Arcade" />
+            <NavMain
+                v-if="isAdmin"
+                :items="adminNavItems"
+                label="Administration"
+            />
         </SidebarContent>
 
         <SidebarFooter>
-            <NavFooter :items="footerNavItems" />
             <NavUser />
         </SidebarFooter>
     </Sidebar>
