@@ -11,49 +11,47 @@ class Game extends Model
     use HasFactory;
 
     protected $fillable = [
-        'slug',
         'name',
-        'tagline',
+        'slug',
+        'category',
         'description',
         'instructions',
         'rules',
-        'icon',
-        'accent',
+        'controls_summary',
         'min_players',
         'max_players',
-        'supports_multiplayer',
+        'icon',
+        'cover_gradient',
+        'thumbnail',
         'is_active',
-        'points_win',
-        'points_draw',
-        'points_loss',
-        'points_participation',
-        'difficulties',
-        'sort_order',
+        'is_featured',
+        'is_trending',
+        'is_new_release',
+        'rating',
+        'plays_count',
+        'points_per_win',
+        'points_per_draw',
     ];
 
     protected function casts(): array
     {
         return [
-            'supports_multiplayer' => 'boolean',
             'is_active' => 'boolean',
-            'difficulties' => 'array',
+            'is_featured' => 'boolean',
+            'is_trending' => 'boolean',
+            'is_new_release' => 'boolean',
+            'rating' => 'float',
+            'plays_count' => 'integer',
             'min_players' => 'integer',
             'max_players' => 'integer',
-            'points_win' => 'integer',
-            'points_draw' => 'integer',
-            'points_loss' => 'integer',
-            'points_participation' => 'integer',
+            'points_per_win' => 'integer',
+            'points_per_draw' => 'integer',
         ];
     }
 
-    public function sessions(): HasMany
+    public function getRouteKeyName(): string
     {
-        return $this->hasMany(GameSession::class);
-    }
-
-    public function results(): HasMany
-    {
-        return $this->hasMany(GameResult::class);
+        return 'slug';
     }
 
     public function rooms(): HasMany
@@ -61,8 +59,33 @@ class Game extends Model
         return $this->hasMany(GameRoom::class);
     }
 
-    public function difficultyOptions(): array
+    public function activeRooms(): HasMany
     {
-        return $this->difficulties ?: ['easy', 'medium', 'hard'];
+        return $this->hasMany(GameRoom::class)->whereIn('status', ['waiting', 'in_progress']);
+    }
+
+    public function sessions(): HasMany
+    {
+        return $this->hasMany(GameSession::class);
+    }
+
+    public function statistics(): HasMany
+    {
+        return $this->hasMany(PlayerStatistic::class);
+    }
+
+    public function leaderboards(): HasMany
+    {
+        return $this->hasMany(Leaderboard::class);
+    }
+
+    public function achievements(): HasMany
+    {
+        return $this->hasMany(Achievement::class);
+    }
+
+    public function userActivities(): HasMany
+    {
+        return $this->hasMany(UserGameActivity::class);
     }
 }

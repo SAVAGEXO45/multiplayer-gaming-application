@@ -2,108 +2,120 @@
 
 namespace App\Services;
 
-use App\Enums\AchievementCriteria;
 use App\Models\Achievement;
-use App\Models\GameResult;
-use App\Models\PlayerStatistics;
+use App\Models\Friendship;
+use App\Models\Leaderboard;
+use App\Models\PlayerAchievement;
+use App\Models\PlayerStatistic;
 use App\Models\User;
-use App\Models\UserAchievement;
-use App\Notifications\AchievementUnlocked;
-use Illuminate\Support\Collection;
-use Illuminate\Support\Facades\DB;
-use Throwable;
 
 class AchievementService
 {
-    public function __construct(private readonly ScoringService $scoring) {}
+    public function __construct(
+        private readonly NotificationService $notificationService
+    ) {}
 
     /**
-     * @return Collection<int, Achievement>
+     * Evaluate all achievements for a user and unlock any newly satisfied criteria.
+     *
+     * @return array<int, Achievement>
      */
-    public function evaluate(User $user): Collection
+    public function checkAndUnlock(User $user): array
     {
-        $unlockedIds = UserAchievement::query()
-            ->where('user_id', $user->id)
+        $unlockedIds = PlayerAchievement::where('user_id', $user->id)
             ->pluck('achievement_id')
+            ->map(fn ($id) => (int) $id)
             ->all();
 
-        $candidates = Achievement::query()
-            ->where('is_active', true)
-            ->whereNotIn('id', $unlockedIds)
-            ->get();
+        $globalStat = PlayerStatistic::firstOrCreate(
+            ['user_id' => $user->id, 'game_id' => null],
+            [
+                'games_played' => 0,
+                'games_won' => 0,
+                'games_lost' => 0,
+                'games_drawn' => 0,
+                'win_percentage' => 0,
+                'total_points' => 0,
+                'current_streak' => 0,
+                'best_streak' => 0,
+            ]
+        );
 
-        $unlocked = collect();
+        $gameStats = PlayerStatistic::where('user_id', $user->id)
+            ->whereNotNull('game_id')
+            ->get()
+            ->keyBy('game_id');
+
+        $friendsCount = Friendship::where('user_id', $user->id)->count();
+
+        $candidates = Achievement::all();
+        $newlyUnlocked = [];
 
         foreach ($candidates as $achievement) {
-            if ($this->currentValue($user, $achievement) < $achievement->criteria_value) {
+            if (in_array((int) $achievement->id, $unlockedIds, true)) {
                 continue;
             }
 
-            $created = DB::transaction(function () use ($user, $achievement): bool {
-                $record = UserAchievement::query()->firstOrCreate(
-                    ['user_id' => $user->id, 'achievement_id' => $achievement->id],
-                    ['unlocked_at' => now()],
-                );
+            $qualified = match ($achievement->criteria_type) {
+                'games_played' => $globalStat->games_played >= $achievement->criteria_value,
+                'games_won' => $globalStat->games_won >= $achievement->criteria_value,
+                'total_points' => $globalStat->total_points >= $achievement->criteria_value,
+                'win_streak' => $globalStat->best_streak >= $achievement->criteria_value,
+                'friends_count' => $friendsCount >= $achievement->criteria_value,
+                'game_specific_wins' => $achievement->game_id !== null
+                    && ($gameStats->get($achievement->game_id)?->games_won ?? 0) >= $achievement->criteria_value,
+                default => false,
+            };
 
-                if (! $record->wasRecentlyCreated) {
-                    return false;
-                }
+            if ($qualified) {
+                PlayerAchievement::firstOrCreate([
+                    'user_id' => $user->id,
+                    'achievement_id' => $achievement->id,
+                ], [
+                    'unlocked_at' => now(),
+                ]);
 
                 if ($achievement->points_reward > 0) {
-                    $this->scoring->award(
-                        $user,
-                        $achievement->points_reward,
-                        "Achievement unlocked: {$achievement->name}",
-                        'achievement',
-                        $achievement->id,
-                    );
+                    $globalStat->increment('total_points', $achievement->points_reward);
+                    $this->addBonusPointsToGlobalLeaderboard($user->id, $achievement->points_reward);
                 }
 
-                return true;
-            });
+                $this->notificationService->notify(
+                    $user,
+                    'achievement_unlocked',
+                    'Achievement Unlocked: ' . $achievement->name,
+                    "You earned the \"{$achievement->name}\" badge (+{$achievement->points_reward} pts)!",
+                    route('profile.show', $user->username),
+                    ['achievement_id' => $achievement->id, 'reward' => $achievement->points_reward]
+                );
 
-            if ($created) {
-                $unlocked->push($achievement);
-
-                try {
-                    $user->notify(new AchievementUnlocked($achievement));
-                } catch (Throwable) {
-                    // Notifications are best-effort and must never break gameplay.
-                }
+                $newlyUnlocked[] = $achievement;
+                $unlockedIds[] = (int) $achievement->id;
             }
         }
 
-        return $unlocked;
+        return $newlyUnlocked;
     }
 
-    public function progress(User $user, Achievement $achievement): int
+    private function addBonusPointsToGlobalLeaderboard(int $userId, int $bonusPoints): void
     {
-        return $this->currentValue($user, $achievement);
-    }
+        $entry = Leaderboard::firstOrCreate(
+            [
+                'user_id' => $userId,
+                'game_id' => null,
+                'period_type' => 'global',
+                'period_key' => 'all',
+            ],
+            [
+                'points' => 0,
+                'wins' => 0,
+                'losses' => 0,
+                'draws' => 0,
+                'games_played' => 0,
+                'win_percentage' => 0,
+            ]
+        );
 
-    private function currentValue(User $user, Achievement $achievement): int
-    {        $statistics = PlayerStatistics::query()->firstOrCreate(['user_id' => $user->id]);
-
-        return match ($achievement->criteria_type) {
-            AchievementCriteria::Wins->value => (int) $statistics->wins,
-            AchievementCriteria::GamesPlayed->value => (int) $statistics->games_played,
-            AchievementCriteria::Streak->value => (int) $statistics->best_streak,
-            AchievementCriteria::Points->value => (int) $statistics->points,
-            AchievementCriteria::MultiplayerWins->value => (int) $statistics->multiplayer_wins,
-            AchievementCriteria::TicTacToeWins->value => $this->winsForGame($user, 'tic-tac-toe'),
-            AchievementCriteria::RpsWins->value => $this->winsForGame($user, 'rock-paper-scissors'),
-            AchievementCriteria::NumberGuessWins->value => $this->winsForGame($user, 'number-guess'),
-            default => 0,
-        };
-    }
-
-    private function winsForGame(User $user, string $slug): int
-    {
-        return GameResult::query()
-            ->join('games', 'games.id', '=', 'game_results.game_id')
-            ->where('game_results.user_id', $user->id)
-            ->where('game_results.result', 'win')
-            ->where('games.slug', $slug)
-            ->count();
+        $entry->increment('points', $bonusPoints);
     }
 }

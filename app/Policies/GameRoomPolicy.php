@@ -9,21 +9,37 @@ class GameRoomPolicy
 {
     public function view(User $user, GameRoom $room): bool
     {
-        return true;
+        if ($user->isAdmin()) {
+            return true;
+        }
+
+        if ($room->visibility === 'public') {
+            return true;
+        }
+
+        return $room->hasPlayer($user->id);
     }
 
-    public function start(User $user, GameRoom $room): bool
+    public function join(User $user, GameRoom $room): bool
     {
-        return $room->host_id === $user->id;
+        if ($user->is_suspended) {
+            return false;
+        }
+
+        if ($room->hasPlayer($user->id)) {
+            return true;
+        }
+
+        return in_array($room->status, ['waiting', 'in_progress'], true) && !$room->isFull();
     }
 
-    public function leave(User $user, GameRoom $room): bool
+    public function makeMove(User $user, GameRoom $room): bool
     {
-        return $room->hasPlayer($user);
+        return !$user->is_suspended && $room->hasPlayer($user->id);
     }
 
-    public function update(User $user, GameRoom $room): bool
+    public function manage(User $user, GameRoom $room): bool
     {
-        return $user->isAdmin() || $room->host_id === $user->id;
+        return $user->isAdmin() || $room->isHost($user->id);
     }
 }

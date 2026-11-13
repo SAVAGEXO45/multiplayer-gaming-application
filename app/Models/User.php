@@ -2,139 +2,168 @@
 
 namespace App\Models;
 
-use App\Enums\UserRole;
 use Database\Factories\UserFactory;
-use Illuminate\Contracts\Auth\MustVerifyEmail;
-use Illuminate\Database\Eloquent\Attributes\Fillable;
-use Illuminate\Database\Eloquent\Attributes\Hidden;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
-use Illuminate\Support\Carbon;
-use Illuminate\Support\Str;
-use Laravel\Fortify\Contracts\PasskeyUser;
-use Laravel\Fortify\PasskeyAuthenticatable;
-use Laravel\Fortify\TwoFactorAuthenticatable;
 use Laravel\Sanctum\HasApiTokens;
 
-/**
- * @property int $id
- * @property string $name
- * @property string $username
- * @property string $email
- * @property string|null $avatar_path
- * @property string|null $bio
- * @property UserRole $role
- * @property bool $is_suspended
- * @property Carbon|null $suspended_at
- * @property string|null $suspension_reason
- * @property Carbon|null $email_verified_at
- * @property string $password
- * @property Carbon|null $created_at
- * @property Carbon|null $updated_at
- */
-#[Fillable(['name', 'username', 'email', 'password', 'avatar_path', 'bio', 'role', 'is_suspended', 'suspended_at', 'suspension_reason', 'last_seen_at'])]
-#[Hidden(['password', 'two_factor_secret', 'two_factor_recovery_codes', 'remember_token'])]
-class User extends Authenticatable implements MustVerifyEmail, PasskeyUser
+class User extends Authenticatable
 {
     /** @use HasFactory<UserFactory> */
-    use HasApiTokens, HasFactory, Notifiable, PasskeyAuthenticatable, TwoFactorAuthenticatable;
+    use HasApiTokens, HasFactory, Notifiable;
 
-    /**
-     * @var array<string, mixed>
-     */
-    protected $attributes = [
-        'role' => 'player',
-        'is_suspended' => false,
+    protected $fillable = [
+        'name',
+        'username',
+        'email',
+        'password',
+        'role',
+        'avatar',
+        'bio',
+        'is_suspended',
+        'is_online',
+        'last_seen_at',
+        'email_verified_at',
+    ];
+
+    protected $hidden = [
+        'password',
+        'remember_token',
     ];
 
     protected function casts(): array
     {
         return [
             'email_verified_at' => 'datetime',
-            'password' => 'hashed',
-            'two_factor_confirmed_at' => 'datetime',
-            'role' => UserRole::class,
-            'is_suspended' => 'boolean',
-            'suspended_at' => 'datetime',
             'last_seen_at' => 'datetime',
+            'password' => 'hashed',
+            'is_suspended' => 'boolean',
+            'is_online' => 'boolean',
         ];
-    }
-
-    protected static function booted(): void
-    {
-        static::created(function (User $user): void {
-            $user->statistics()->firstOrCreate();
-        });
-    }
-
-    public function statistics(): HasOne
-    {
-        return $this->hasOne(PlayerStatistics::class);
-    }
-
-    public function gameSessions(): HasMany
-    {
-        return $this->hasMany(GameSession::class, 'created_by');
-    }
-
-    public function gameResults(): HasMany
-    {
-        return $this->hasMany(GameResult::class);
-    }
-
-    public function hostedRooms(): HasMany
-    {
-        return $this->hasMany(GameRoom::class, 'host_id');
-    }
-
-    public function roomPlayers(): HasMany
-    {
-        return $this->hasMany(RoomPlayer::class);
-    }
-
-    public function achievements(): HasMany
-    {
-        return $this->hasMany(UserAchievement::class);
-    }
-
-    public function rewardTransactions(): HasMany
-    {
-        return $this->hasMany(RewardTransaction::class);
     }
 
     public function isAdmin(): bool
     {
-        return $this->role === UserRole::Admin;
+        return $this->role === 'admin';
     }
 
-    public function isSuspended(): bool
+    public function isPlayer(): bool
     {
-        return $this->is_suspended;
+        return $this->role === 'player';
     }
 
-    public function points(): int
+    public function getAvatarUrlAttribute(): string
     {
-        return (int) ($this->statistics?->points ?? 0);
-    }
-
-    public function avatarUrl(): string
-    {
-        if ($this->avatar_path) {
-            return asset('storage/'.$this->avatar_path);
+        if ($this->avatar) {
+            return str_starts_with($this->avatar, 'http')
+                ? $this->avatar
+                : asset('storage/' . $this->avatar);
         }
 
-        return 'https://api.dicebear.com/9.x/bottts-neutral/svg?seed='.urlencode($this->username ?: $this->name);
+        $initials = urlencode($this->username ?: $this->name);
+        return "https://ui-avatars.com/api/?name={$initials}&background=6366f1&color=ffffff&bold=true";
     }
 
-    public function initials(): string
+    public function statistics(): HasMany
     {
-        return Str::of($this->name)
-            ->explode(' ')
-            ->map(fn (string $part): string => Str::substr($part, 0, 1))
-            ->take(2)
-            ->implode('');
+        return $this->hasMany(PlayerStatistic::class);
+    }
+
+    public function globalStatistic(): HasOne
+    {
+        return $this->hasOne(PlayerStatistic::class)->whereNull('game_id');
+    }
+
+    public function hostedRooms(): HasMany
+    {
+        return $this->hasMany(GameRoom::class, 'host_user_id');
+    }
+
+    public function roomMemberships(): HasMany
+    {
+        return $this->hasMany(RoomPlayer::class);
+    }
+
+    public function wonSessions(): HasMany
+    {
+        return $this->hasMany(GameSession::class, 'winner_user_id');
+    }
+
+    public function gameMoves(): HasMany
+    {
+        return $this->hasMany(GameMove::class);
+    }
+
+    public function leaderboards(): HasMany
+    {
+        return $this->hasMany(Leaderboard::class);
+    }
+
+    public function achievements(): BelongsToMany
+    {
+        return $this->belongsToMany(Achievement::class, 'player_achievements')
+            ->withPivot('unlocked_at')
+            ->withTimestamps();
+    }
+
+    public function playerAchievements(): HasMany
+    {
+        return $this->hasMany(PlayerAchievement::class);
+    }
+
+    public function friendships(): HasMany
+    {
+        return $this->hasMany(Friendship::class, 'user_id');
+    }
+
+    public function friends(): BelongsToMany
+    {
+        return $this->belongsToMany(User::class, 'friendships', 'user_id', 'friend_id')
+            ->withTimestamps();
+    }
+
+    public function sentFriendRequests(): HasMany
+    {
+        return $this->hasMany(FriendRequest::class, 'sender_id');
+    }
+
+    public function receivedFriendRequests(): HasMany
+    {
+        return $this->hasMany(FriendRequest::class, 'receiver_id');
+    }
+
+    public function platformNotifications(): HasMany
+    {
+        return $this->hasMany(PlatformNotification::class, 'user_id')->latest();
+    }
+
+    public function unreadPlatformNotifications(): HasMany
+    {
+        return $this->hasMany(PlatformNotification::class, 'user_id')->whereNull('read_at')->latest();
+    }
+
+    public function gameActivities(): HasMany
+    {
+        return $this->hasMany(UserGameActivity::class);
+    }
+
+    public function favoriteGames(): BelongsToMany
+    {
+        return $this->belongsToMany(Game::class, 'user_game_activities')
+            ->wherePivot('is_favorite', true)
+            ->withPivot(['is_favorite', 'plays_count', 'high_score', 'max_level', 'last_played_at'])
+            ->withTimestamps();
+    }
+
+    public function recentlyPlayedGames(): BelongsToMany
+    {
+        return $this->belongsToMany(Game::class, 'user_game_activities')
+            ->whereNotNull('user_game_activities.last_played_at')
+            ->withPivot(['is_favorite', 'plays_count', 'high_score', 'max_level', 'last_played_at'])
+            ->orderByDesc('user_game_activities.last_played_at');
     }
 }

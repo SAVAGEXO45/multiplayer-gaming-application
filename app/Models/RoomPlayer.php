@@ -13,21 +13,23 @@ class RoomPlayer extends Model
     protected $fillable = [
         'game_room_id',
         'user_id',
+        'player_slot',
+        'player_symbol',
+        'status',
         'is_ready',
-        'is_host',
         'score',
         'joined_at',
-        'left_at',
+        'last_ping_at',
     ];
 
     protected function casts(): array
     {
         return [
+            'player_slot' => 'integer',
             'is_ready' => 'boolean',
-            'is_host' => 'boolean',
             'score' => 'integer',
             'joined_at' => 'datetime',
-            'left_at' => 'datetime',
+            'last_ping_at' => 'datetime',
         ];
     }
 

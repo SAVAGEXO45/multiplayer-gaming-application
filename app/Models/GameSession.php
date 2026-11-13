@@ -2,7 +2,6 @@
 
 namespace App\Models;
 
-use App\Enums\GameSessionStatus;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -13,36 +12,37 @@ class GameSession extends Model
     use HasFactory;
 
     protected $fillable = [
-        'uuid',
+        'game_room_id',
         'game_id',
-        'room_id',
-        'created_by',
+        'session_number',
         'status',
-        'difficulty',
-        'state',
         'current_turn_user_id',
-        'winner_id',
+        'winner_user_id',
         'is_draw',
+        'board_state',
+        'scores',
+        'result_reason',
+        'moves_count',
         'started_at',
-        'finished_at',
+        'ended_at',
     ];
 
     protected function casts(): array
     {
         return [
-            'status' => GameSessionStatus::class,
-            'state' => 'array',
+            'session_number' => 'integer',
             'is_draw' => 'boolean',
+            'board_state' => 'array',
+            'scores' => 'array',
+            'moves_count' => 'integer',
             'started_at' => 'datetime',
-            'finished_at' => 'datetime',
+            'ended_at' => 'datetime',
         ];
     }
 
-    protected static function booted(): void
+    public function room(): BelongsTo
     {
-        static::creating(function (GameSession $session): void {
-            $session->uuid ??= (string) \Illuminate\Support\Str::uuid();
-        });
+        return $this->belongsTo(GameRoom::class, 'game_room_id');
     }
 
     public function game(): BelongsTo
@@ -50,49 +50,18 @@ class GameSession extends Model
         return $this->belongsTo(Game::class);
     }
 
-    public function room(): BelongsTo
-    {
-        return $this->belongsTo(GameRoom::class, 'room_id');
-    }
-
-    public function creator(): BelongsTo
-    {
-        return $this->belongsTo(User::class, 'created_by');
-    }
-
-    public function currentTurn(): BelongsTo
+    public function currentTurnUser(): BelongsTo
     {
         return $this->belongsTo(User::class, 'current_turn_user_id');
     }
 
     public function winner(): BelongsTo
     {
-        return $this->belongsTo(User::class, 'winner_id');
+        return $this->belongsTo(User::class, 'winner_user_id');
     }
 
-    public function results(): HasMany
+    public function moves(): HasMany
     {
-        return $this->hasMany(GameResult::class);
-    }
-
-    public function isActive(): bool
-    {
-        return $this->status === GameSessionStatus::Active;
-    }
-
-    /**
-     * @return array<int, int>
-     */
-    public function playerIds(): array
-    {
-        return collect($this->state['players'] ?? [])
-            ->map(fn ($id): int => (int) $id)
-            ->values()
-            ->all();
-    }
-
-    public function involves(User $user): bool
-    {
-        return in_array($user->id, $this->playerIds(), true);
+        return $this->hasMany(GameMove::class)->orderBy('move_number');
     }
 }

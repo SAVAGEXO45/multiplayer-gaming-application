@@ -2,42 +2,43 @@
 
 namespace App\Models;
 
-use App\Enums\RoomStatus;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class GameRoom extends Model
 {
     use HasFactory;
 
     protected $fillable = [
-        'code',
+        'room_code',
         'name',
         'game_id',
-        'host_id',
-        'max_players',
+        'host_user_id',
+        'visibility',
         'status',
-        'is_private',
-        'password',
-        'current_session_id',
+        'max_players',
+        'settings',
         'started_at',
-        'finished_at',
+        'ended_at',
     ];
 
     protected function casts(): array
     {
         return [
-            'status' => RoomStatus::class,
-            'is_private' => 'boolean',
             'max_players' => 'integer',
+            'settings' => 'array',
             'started_at' => 'datetime',
-            'finished_at' => 'datetime',
+            'ended_at' => 'datetime',
         ];
     }
 
-    protected $hidden = ['password'];
+    public function getRouteKeyName(): string
+    {
+        return 'room_code';
+    }
 
     public function game(): BelongsTo
     {
@@ -46,36 +47,46 @@ class GameRoom extends Model
 
     public function host(): BelongsTo
     {
-        return $this->belongsTo(User::class, 'host_id');
+        return $this->belongsTo(User::class, 'host_user_id');
     }
 
-    public function players(): HasMany
+    public function roomPlayers(): HasMany
     {
-        return $this->hasMany(RoomPlayer::class);
+        return $this->hasMany(RoomPlayer::class)->orderBy('player_slot');
     }
 
     public function activePlayers(): HasMany
     {
-        return $this->players()->whereNull('left_at');
+        return $this->hasMany(RoomPlayer::class)
+            ->whereIn('status', ['active', 'ready'])
+            ->orderBy('player_slot');
     }
 
-    public function currentSession(): BelongsTo
+    public function sessions(): HasMany
     {
-        return $this->belongsTo(GameSession::class, 'current_session_id');
+        return $this->hasMany(GameSession::class)->orderByDesc('session_number');
     }
 
-    public function hasPassword(): bool
+    public function activeSession(): HasOne
     {
-        return $this->password !== null;
+        return $this->hasOne(GameSession::class)->latestOfMany('id');
+    }
+
+    public function hasPlayer(int $userId): bool
+    {
+        return $this->roomPlayers()
+            ->where('user_id', $userId)
+            ->whereIn('status', ['active', 'ready', 'disconnected'])
+            ->exists();
+    }
+
+    public function isHost(int $userId): bool
+    {
+        return (int) $this->host_user_id === $userId;
     }
 
     public function isFull(): bool
     {
         return $this->activePlayers()->count() >= $this->max_players;
-    }
-
-    public function hasPlayer(User $user): bool
-    {
-        return $this->activePlayers()->where('user_id', $user->id)->exists();
     }
 }

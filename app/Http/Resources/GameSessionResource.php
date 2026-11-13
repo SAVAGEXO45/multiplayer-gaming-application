@@ -2,71 +2,48 @@
 
 namespace App\Http\Resources;
 
-use App\Models\User;
-use App\Services\Games\GameManager;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
-use Illuminate\Support\Collection;
 
-/** @mixin \App\Models\GameSession */
 class GameSessionResource extends JsonResource
 {
-    /**
-     * @return array<string, mixed>
-     */
     public function toArray(Request $request): array
     {
-        $viewer = $request->user();
-        $engine = app(GameManager::class)->forSlug($this->game->slug);
-        $state = $engine->publicState($this->resource, $viewer);
+        $boardState = $this->board_state;
+
+        // Mask opponent RPS choice until round resolves
+        if (($boardState['type'] ?? '') === 'rock-paper-scissors' && !empty($boardState['current_choices'])) {
+            $viewerId = $request->user()?->id;
+            $masked = [];
+            foreach ($boardState['current_choices'] as $uid => $choice) {
+                $masked[$uid] = ((int) $uid === (int) $viewerId) ? $choice : 'locked';
+            }
+            $boardState['current_choices'] = $masked;
+        }
 
         return [
             'id' => $this->id,
-            'uuid' => $this->uuid,
-            'status' => $this->status->value,
-            'difficulty' => $this->difficulty,
-            'state' => $state,
+            'game_room_id' => $this->game_room_id,
+            'game_id' => $this->game_id,
+            'session_number' => $this->session_number,
+            'status' => $this->status,
             'current_turn_user_id' => $this->current_turn_user_id,
-            'winner_id' => $this->winner_id,
+            'winner_user_id' => $this->winner_user_id,
             'is_draw' => $this->is_draw,
-            'game' => new GameResource($this->whenLoaded('game')),
-            'room_code' => $this->whenLoaded('room', fn () => $this->room?->code),
-            'players' => UserResource::collection($this->resolvePlayers()),
-            'results' => GameResultResource::collection($this->whenLoaded('results')),
+            'board_state' => $boardState,
+            'scores' => $this->scores,
+            'result_reason' => $this->result_reason,
+            'moves_count' => $this->moves_count,
+            'moves' => $this->whenLoaded('moves', fn () => $this->moves->map(fn ($m) => [
+                'id' => $m->id,
+                'user_id' => $m->user_id,
+                'username' => $m->user?->username,
+                'move_number' => $m->move_number,
+                'move_data' => $m->move_data,
+                'created_at' => $m->created_at?->toIso8601String(),
+            ])),
             'started_at' => $this->started_at?->toIso8601String(),
-            'finished_at' => $this->finished_at?->toIso8601String(),
-            'created_at' => $this->created_at?->toIso8601String(),
+            'ended_at' => $this->ended_at?->toIso8601String(),
         ];
-    }
-
-    /**
-     * Resolve the players taking part in the session. Completed sessions expose
-     * them through results, while active sessions only have their ids in state.
-     *
-     * @return Collection<int, User>
-     */
-    private function resolvePlayers(): Collection
-    {
-        if ($this->relationLoaded('results')) {
-            $players = $this->results->pluck('user')->filter()->unique('id')->values();
-
-            if ($players->isNotEmpty()) {
-                return $players;
-            }
-        }
-
-        $ids = $this->state['players'] ?? [];
-
-        if (! is_array($ids) || $ids === []) {
-            return collect();
-        }
-
-        $ordered = array_values(array_unique(array_map('intval', $ids)));
-        $users = User::query()->whereIn('id', $ordered)->get()->keyBy('id');
-
-        return collect($ordered)
-            ->map(fn (int $id): ?User => $users->get($id))
-            ->filter()
-            ->values();
     }
 }

@@ -1,56 +1,75 @@
 <?php
 
-use App\Http\Controllers\Api\AdminController;
-use App\Http\Controllers\Api\AuthController;
-use App\Http\Controllers\Api\GameController;
-use App\Http\Controllers\Api\LeaderboardController;
-use App\Http\Controllers\Api\PlayerController;
-use App\Http\Controllers\Api\RoomController;
+use App\Http\Controllers\Api\AchievementApiController;
+use App\Http\Controllers\Api\AdminApiController;
+use App\Http\Controllers\Api\AuthApiController;
+use App\Http\Controllers\Api\FriendApiController;
+use App\Http\Controllers\Api\GameApiController;
+use App\Http\Controllers\Api\GameMoveApiController;
+use App\Http\Controllers\Api\GameRoomApiController;
+use App\Http\Controllers\Api\LeaderboardApiController;
+use App\Http\Controllers\Api\NotificationApiController;
+use App\Http\Controllers\Api\UserApiController;
 use Illuminate\Support\Facades\Route;
 
-Route::post('register', [AuthController::class, 'register'])->middleware('throttle:auth');
-Route::post('login', [AuthController::class, 'login'])->middleware('throttle:auth');
+// Public Authentication Routes
+Route::prefix('auth')->middleware('throttle:auth-attempts')->group(function () {
+    Route::post('/register', [AuthApiController::class, 'register']);
+    Route::post('/login', [AuthApiController::class, 'login']);
+});
 
-Route::middleware(['auth:sanctum', 'not_suspended', 'throttle:api'])->group(function () {
-    Route::get('user', [AuthController::class, 'user']);
-    Route::post('logout', [AuthController::class, 'logout']);
+// Public Game Catalog & Leaderboards
+Route::get('/games', [GameApiController::class, 'index']);
+Route::get('/games/{game:slug}', [GameApiController::class, 'show']);
+Route::get('/leaderboards', [LeaderboardApiController::class, 'index']);
+Route::get('/achievements', [AchievementApiController::class, 'index']);
 
-    Route::get('profile', [PlayerController::class, 'profile']);
-    Route::get('statistics', [PlayerController::class, 'statistics']);
-    Route::get('achievements', [PlayerController::class, 'achievements']);
-    Route::get('rewards', [PlayerController::class, 'rewards']);
-    Route::post('rewards/{reward:slug}/redeem', [PlayerController::class, 'redeemReward']);
+// Protected API Routes (Sanctum + Active Session Auth Support)
+Route::middleware(['auth:sanctum', 'active'])->group(function () {
+    // Auth
+    Route::get('/auth/me', [AuthApiController::class, 'me']);
+    Route::post('/auth/logout', [AuthApiController::class, 'logout']);
 
-    Route::get('games', [GameController::class, 'index']);
-    Route::get('games/{game:slug}', [GameController::class, 'show']);
-    Route::post('games/{game:slug}/start', [GameController::class, 'start']);
-    Route::get('games/{game:slug}/history', [GameController::class, 'history']);
+    // Users & Profiles
+    Route::get('/users', [UserApiController::class, 'index']);
+    Route::get('/users/{username}', [UserApiController::class, 'show']);
+    Route::put('/profile', [UserApiController::class, 'updateProfile']);
 
-    Route::get('sessions/{session:uuid}', [GameController::class, 'session']);
-    Route::post('games/{session:uuid}/move', [GameController::class, 'move'])
+    // Game Rooms
+    Route::get('/rooms', [GameRoomApiController::class, 'index']);
+    Route::post('/rooms', [GameRoomApiController::class, 'store']);
+    Route::post('/rooms/join-code', [GameRoomApiController::class, 'joinByCode']);
+    Route::get('/rooms/{room:room_code}', [GameRoomApiController::class, 'show']);
+    Route::post('/rooms/{room:room_code}/join', [GameRoomApiController::class, 'join']);
+    Route::post('/rooms/{room:room_code}/leave', [GameRoomApiController::class, 'leave']);
+    Route::post('/rooms/{room:room_code}/start', [GameRoomApiController::class, 'startOrRestart']);
+    Route::post('/rooms/{room:room_code}/restart', [GameRoomApiController::class, 'startOrRestart']);
+    Route::post('/rooms/{room:room_code}/invite', [GameRoomApiController::class, 'invite']);
+
+    // Game Moves & Sessions
+    Route::post('/rooms/{room:room_code}/moves', [GameMoveApiController::class, 'store'])
         ->middleware('throttle:game-moves');
-    Route::post('sessions/{session:uuid}/resign', [GameController::class, 'resign']);
+    Route::get('/sessions/{session}', [GameMoveApiController::class, 'showSession']);
 
-    Route::get('rooms', [RoomController::class, 'index']);
-    Route::post('rooms', [RoomController::class, 'store']);
-    Route::get('rooms/{room:code}', [RoomController::class, 'show']);
-    Route::post('rooms/{room:code}/join', [RoomController::class, 'join']);
-    Route::post('rooms/{room:code}/leave', [RoomController::class, 'leave']);
-    Route::post('rooms/{room:code}/ready', [RoomController::class, 'ready']);
-    Route::post('rooms/{room:code}/start', [RoomController::class, 'start']);
+    // Friends & Social
+    Route::get('/friends', [FriendApiController::class, 'index']);
+    Route::post('/friends/requests', [FriendApiController::class, 'sendRequest']);
+    Route::post('/friends/requests/{friendRequest}/accept', [FriendApiController::class, 'acceptRequest']);
+    Route::post('/friends/requests/{friendRequest}/reject', [FriendApiController::class, 'rejectRequest']);
+    Route::delete('/friends/{friend}', [FriendApiController::class, 'removeFriend']);
 
-    Route::get('leaderboard', [LeaderboardController::class, 'index']);
-    Route::get('leaderboard/weekly', [LeaderboardController::class, 'weekly']);
-    Route::get('leaderboard/monthly', [LeaderboardController::class, 'monthly']);
+    // Notifications
+    Route::get('/notifications', [NotificationApiController::class, 'index']);
+    Route::post('/notifications/{notification}/read', [NotificationApiController::class, 'markRead']);
+    Route::post('/notifications/read-all', [NotificationApiController::class, 'markAllRead']);
 
+    // Admin Management Routes
     Route::prefix('admin')->middleware('admin')->group(function () {
-        Route::get('dashboard', [AdminController::class, 'dashboard']);
-        Route::get('users', [AdminController::class, 'users']);
-        Route::get('games', [AdminController::class, 'games']);
-        Route::get('rooms', [AdminController::class, 'rooms']);
-        Route::get('activity', [AdminController::class, 'activity']);
-        Route::patch('users/{user}/status', [AdminController::class, 'updateUserStatus']);
-        Route::patch('users/{user}/role', [AdminController::class, 'updateUserRole']);
-        Route::patch('games/{game}', [AdminController::class, 'updateGame']);
+        Route::get('/overview', [AdminApiController::class, 'overview']);
+        Route::get('/users', [AdminApiController::class, 'users']);
+        Route::post('/users/{user}/toggle-suspension', [AdminApiController::class, 'toggleUserSuspension']);
+        Route::post('/games/{game:slug}/toggle-status', [AdminApiController::class, 'toggleGameStatus']);
+        Route::get('/rooms', [AdminApiController::class, 'activeRooms']);
+        Route::post('/achievements', [AdminApiController::class, 'createAchievement']);
     });
 });
