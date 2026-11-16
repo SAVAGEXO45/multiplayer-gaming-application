@@ -164,3 +164,23 @@ Run the full PHPUnit Unit & Feature test suite:
 ```powershell
 php vendor/phpunit/phpunit/phpunit --testdox
 ```
+
+---
+
+## 6. Public Cloud Deployment (Render / Railway / Docker)
+
+The repository includes pre-configured deployment manifests:
+- `Dockerfile` — Production container with PHP 8.3 CLI, SQLite, Composer, and built frontend assets.
+- `render.yaml` — 1-click Blueprint for [Render.com](https://render.com).
+- `nixpacks.toml` — Native build configuration for [Railway.app](https://railway.com).
+
+### Deploy to Render in 3 Steps:
+1. Go to [dashboard.render.com](https://dashboard.render.com) and click **"New +"** -> **"Web Service"**.
+2. Select your GitHub repository: `SAVAGEXO45/multiplayer-gaming-application`.
+3. Choose **Docker** as the runtime (Render will automatically detect `Dockerfile` or `render.yaml`) and click **"Deploy Web Service"**.
+
+### Deploy to Railway in 3 Steps:
+1. Go to [railway.com](https://railway.com) and click **"New Project"**.
+2. Select **"Deploy from GitHub repo"** and choose `SAVAGEXO45/multiplayer-gaming-application`.
+3. Railway will build using Nixpacks and provision a public `https://...up.railway.app` URL with SSL automatically.
+

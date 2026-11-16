@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: nexus-arena
+    runtime: docker
+    plan: free
+    region: oregon
+    buildCommand: ""
+    startCommand: ""
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: APP_DEBUG
+        value: false
+      - key: APP_URL
+        generateFilter: false
+      - key: DB_CONNECTION
+        value: sqlite
+      - key: PORT
+        value: 8080
