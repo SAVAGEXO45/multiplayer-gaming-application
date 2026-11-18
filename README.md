@@ -167,12 +167,35 @@ php vendor/phpunit/phpunit/phpunit --testdox
 
 ---
 
-## 6. Public Cloud Deployment (Render / Railway / Docker)
+## 6. Public Cloud Deployment (Render / Railway / NairaHost Linux Cloud VPS)
 
 The repository includes pre-configured deployment manifests:
-- `Dockerfile` — Production container with PHP 8.3 CLI, SQLite, Composer, and built frontend assets.
+- `docker-compose.yml` & `Dockerfile` — Universal production container deployment.
+- `deploy-vps.sh` — 1-script automated installer for NairaHost Linux Cloud Server (Ubuntu 22.04 / 24.04).
 - `render.yaml` — 1-click Blueprint for [Render.com](https://render.com).
 - `nixpacks.toml` — Native build configuration for [Railway.app](https://railway.com).
+
+### Deploy to NairaHost Linux Cloud Server (VPS):
+
+#### **Method 1: Docker (Fastest, 2 Minutes)**
+Connect to your NairaHost server via SSH and run:
+```bash
+sudo apt update && sudo apt install -y docker.io docker-compose
+git clone https://github.com/SAVAGEXO45/multiplayer-gaming-application.git
+cd multiplayer-gaming-application
+sudo docker-compose up -d --build
+```
+Your gaming website is immediately live on your server IP!
+
+#### **Method 2: Native Nginx & PHP 8.3 Installer**
+Connect to your NairaHost server via SSH and run:
+```bash
+git clone https://github.com/SAVAGEXO45/multiplayer-gaming-application.git
+cd multiplayer-gaming-application
+chmod +x deploy-vps.sh
+./deploy-vps.sh
+```
+This automatically installs Nginx, PHP 8.3-FPM, Node.js, compiles assets, sets up the database, and starts the web server.
 
 ### Deploy to Render in 3 Steps:
 1. Go to [dashboard.render.com](https://dashboard.render.com) and click **"New +"** -> **"Web Service"**.
