@@ -153,8 +153,12 @@ export class NexusArcadeInstance {
 
         this.width = 960;
         this.height = 540;
-        this.canvas.width = this.width;
-        this.canvas.height = this.height;
+        this.dpr = Math.min(window.devicePixelRatio || 1, 2);
+        this.canvas.width = this.width * this.dpr;
+        this.canvas.height = this.height * this.dpr;
+        this.canvas.style.width = '100%';
+        this.canvas.style.height = '100%';
+        this.shake = 0;
 
         this.sfx = new NexusSoundEngine();
         this.keys = {};
@@ -396,6 +400,7 @@ export class NexusArcadeInstance {
         }
         this.health = Math.max(0, this.health - amount);
         this.combo = 0;
+        this.shake = Math.min(22, this.shake + 12);
         this.sfx.hit();
         this.spawnParticles(this.width / 2, this.height - 60, '#ef4444', 10, 140);
 
@@ -1835,14 +1840,103 @@ export class NexusArcadeInstance {
             }
         }
 
+        if (this.shake > 0) {
+            this.shake = Math.max(0, this.shake - dt * 26);
+        }
+
         this.render();
         this.mouse.clicked = false;
         requestAnimationFrame(this.loop);
     }
 
+    // =========================================================================
+    // HIGH-DEFINITION VISUAL RENDERING PIPELINE & POST-PROCESSING
+    // =========================================================================
+
+    drawDropShadow(ctx, x, y, rx, ry, alpha = 0.38) {
+        ctx.save();
+        ctx.translate(x, y);
+        const maxR = Math.max(rx, ry);
+        const grad = ctx.createRadialGradient(0, 0, 0, 0, 0, maxR);
+        grad.addColorStop(0, 'rgba(0, 0, 0, ' + alpha + ')');
+        grad.addColorStop(0.55, 'rgba(0, 0, 0, ' + (alpha * 0.45) + ')');
+        grad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+        ctx.fillStyle = grad;
+        ctx.scale(1, ry / Math.max(1, rx));
+        ctx.beginPath();
+        ctx.arc(0, 0, rx, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+    }
+
+    drawGlow(ctx, x, y, radius, color, alpha = 0.4) {
+        ctx.save();
+        const grad = ctx.createRadialGradient(x, y, 0, x, y, radius);
+        grad.addColorStop(0, color);
+        grad.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.arc(x, y, radius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+    }
+
+    drawVolumetricBeam(ctx, x, y, angle, length, width, color, alpha = 0.3) {
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.rotate(angle);
+        const grad = ctx.createLinearGradient(0, 0, length, 0);
+        grad.addColorStop(0, color);
+        grad.addColorStop(0.2, color);
+        grad.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.moveTo(0, -4);
+        ctx.lineTo(length, -width / 2);
+        ctx.lineTo(length, width / 2);
+        ctx.lineTo(0, 4);
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+    }
+
+    drawVignette(ctx) {
+        ctx.save();
+        const cx = this.width / 2;
+        const cy = this.height / 2;
+        const grad = ctx.createRadialGradient(cx, cy, this.height * 0.38, cx, cy, this.width * 0.72);
+        grad.addColorStop(0, 'rgba(0,0,0,0)');
+        grad.addColorStop(0.7, 'rgba(2, 6, 18, 0.4)');
+        grad.addColorStop(1, 'rgba(1, 3, 10, 0.88)');
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, 0, this.width, this.height);
+        ctx.restore();
+    }
+
+    drawScanlines(ctx) {
+        ctx.save();
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.035)';
+        for (let y = 0; y < this.height; y += 4) {
+            ctx.fillRect(0, y, this.width, 1.5);
+        }
+        ctx.restore();
+    }
+
     render() {
         const ctx = this.ctx;
+        // Reset scale and clear with high-DPI scaling
+        ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
         ctx.clearRect(0, 0, this.width, this.height);
+
+        ctx.save();
+        // Camera shake pass
+        if (this.shake > 0) {
+            const rx = (Math.random() - 0.5) * this.shake;
+            const ry = (Math.random() - 0.5) * this.shake;
+            ctx.translate(rx, ry);
+        }
 
         switch (this.slug) {
             case 'cyber-strike-fps': this.renderFps(ctx); break;
@@ -1857,27 +1951,37 @@ export class NexusArcadeInstance {
             case 'prism-breaker-overdrive': this.renderPrismBreaker(ctx); break;
         }
 
-        // Render particles
+        // Render high-fidelity particle effects
         for (const p of this.particles) {
             ctx.save();
             ctx.globalAlpha = Math.max(0, p.alpha);
             ctx.fillStyle = p.color;
+            ctx.shadowColor = p.color;
+            ctx.shadowBlur = p.radius > 3 ? 8 : 0;
             ctx.beginPath();
             ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
             ctx.fill();
             ctx.restore();
         }
 
-        // Render floating texts
+        // Render kinetic floating damage and combo texts
         for (const f of this.floatingTexts) {
             ctx.save();
             ctx.globalAlpha = Math.max(0, f.alpha);
-            ctx.font = '800 17px "Outfit", sans-serif';
+            ctx.font = '900 18px "Outfit", sans-serif';
+            ctx.shadowColor = 'rgba(0,0,0,0.9)';
+            ctx.shadowBlur = 6;
             ctx.fillStyle = f.color;
             ctx.textAlign = 'center';
             ctx.fillText(f.text, f.x, f.y);
             ctx.restore();
         }
+
+        // Post-processing cinema vignette
+        this.drawVignette(ctx);
+        this.drawScanlines(ctx);
+
+        ctx.restore(); // Restore camera shake before static HUD
 
         this.renderHud(ctx);
 
@@ -1886,557 +1990,1754 @@ export class NexusArcadeInstance {
         }
     }
 
+    // =========================================================================
+    // 1. CYBER STRIKE: NEO FPS (3D Sci-Fi Raycast Corridor, Cyborgs & Photoreal Gun)
+    // =========================================================================
     renderFps(ctx) {
-        const grad = ctx.createLinearGradient(0, 0, 0, this.height);
-        grad.addColorStop(0, '#090d1a');
-        grad.addColorStop(0.55, '#1e1b4b');
-        grad.addColorStop(1, '#111827');
-        ctx.fillStyle = grad;
-        ctx.fillRect(0, 0, this.width, this.height);
+        const ms = this.modeState;
+        const w = ms.weapons[ms.weaponIndex];
+        const time = this.timeElapsed;
 
-        // Neo-Tokyo skyline & cyber grid floor
-        ctx.fillStyle = '#0f172a';
-        for (let i = 0; i < 12; i++) {
-            ctx.fillRect(i * 85, 110 + (i % 3) * 28, 65, 130);
+        // 1. Perspective 3D Corridor Architecture
+        const vpX = this.width / 2;
+        const vpY = 230;
+
+        // Ceiling with recessed LED tube lights
+        const ceilGrad = ctx.createLinearGradient(0, 0, 0, vpY);
+        ceilGrad.addColorStop(0, '#040711');
+        ceilGrad.addColorStop(0.7, '#0b1124');
+        ceilGrad.addColorStop(1, '#1e293b');
+        ctx.fillStyle = ceilGrad;
+        ctx.fillRect(0, 0, this.width, vpY);
+
+        // Overhead neon light fixtures casting downward cones
+        for (let i = 0; i < 4; i++) {
+            const z = 0.25 + i * 0.25;
+            const topY = 15 + i * 28;
+            const lightW = 240 * z;
+            ctx.fillStyle = 'rgba(56, 189, 248, 0.7)';
+            ctx.fillRect(vpX - lightW / 2, topY, lightW, 3);
+            this.drawGlow(ctx, vpX, topY + 4, 65 * z, 'rgba(56, 189, 248, 0.45)', 0.35);
         }
-        ctx.strokeStyle = 'rgba(56, 189, 248, 0.18)';
-        ctx.lineWidth = 1;
-        for (let y = 240; y < this.height; y += 35) {
+
+        // Perspective Metallic Floor with Specular Sheen
+        const floorGrad = ctx.createLinearGradient(0, vpY, 0, this.height);
+        floorGrad.addColorStop(0, '#0a0e1c');
+        floorGrad.addColorStop(0.3, '#10172d');
+        floorGrad.addColorStop(1, '#05070e');
+        ctx.fillStyle = floorGrad;
+        ctx.fillRect(0, vpY, this.width, this.height - vpY);
+
+        // Perspective floor grid & reflection lines
+        ctx.strokeStyle = 'rgba(56, 189, 248, 0.16)';
+        ctx.lineWidth = 1.5;
+        for (let x = -200; x <= this.width + 200; x += 110) {
+            ctx.beginPath();
+            ctx.moveTo(vpX, vpY);
+            ctx.lineTo(x, this.height);
+            ctx.stroke();
+        }
+        for (let y = vpY + 18; y < this.height; y += (y - vpY) * 0.38 + 14) {
+            ctx.strokeStyle = 'rgba(56, 189, 248, 0.12)';
             ctx.beginPath();
             ctx.moveTo(0, y);
             ctx.lineTo(this.width, y);
             ctx.stroke();
         }
 
-        // Enemies
-        for (const e of this.entities) {
+        // Left & Right Metallic Walls with Hazard Stripes & Glowing Conduits
+        const drawWall = (isLeft) => {
+            const x1 = isLeft ? 0 : this.width;
+            const x2 = isLeft ? vpX - 140 : vpX + 140;
+
             ctx.save();
-            ctx.translate(e.x, e.y);
-            ctx.fillStyle = e.hitFlash > 0 ? '#ffffff' : (e.boss ? '#a855f7' : '#ef4444');
-            // Body
             ctx.beginPath();
-            ctx.roundRect(-e.r * 0.75, -e.r * 0.4, e.r * 1.5, e.r * 1.5, 8);
+            ctx.moveTo(x1, 0);
+            ctx.lineTo(x2, vpY - 50);
+            ctx.lineTo(x2, vpY + 95);
+            ctx.lineTo(x1, this.height);
+            ctx.closePath();
+
+            const wallGrad = ctx.createLinearGradient(x1, 0, x2, 0);
+            wallGrad.addColorStop(0, isLeft ? '#070b18' : '#141d33');
+            wallGrad.addColorStop(1, isLeft ? '#141d33' : '#070b18');
+            ctx.fillStyle = wallGrad;
             ctx.fill();
-            // Head (Headshot target)
-            ctx.fillStyle = e.hitFlash > 0 ? '#fde047' : '#1e293b';
-            ctx.beginPath();
-            ctx.arc(0, -e.r * 0.72, e.r * 0.45, 0, Math.PI * 2);
-            ctx.fill();
-            // Glowing visor
-            ctx.fillStyle = '#38bdf8';
-            ctx.fillRect(-e.r * 0.3, -e.r * 0.8, e.r * 0.6, 5);
-            // HP bar
-            ctx.fillStyle = 'rgba(0,0,0,0.65)';
-            ctx.fillRect(-e.r, -e.r * 1.4, e.r * 2, 6);
-            ctx.fillStyle = e.boss ? '#c084fc' : '#22c55e';
-            ctx.fillRect(-e.r, -e.r * 1.4, e.r * 2 * Math.max(0, e.hp / e.maxHp), 6);
-            ctx.restore();
-        }
 
-        // First-Person Weapon Model + Crosshair
-        const ms = this.modeState;
-        const w = ms.weapons[ms.weaponIndex];
-        const gunX = this.width / 2 + (this.mouse.x - this.width / 2) * 0.25;
-        const gunY = this.height - 20 + ms.recoil;
-        ctx.fillStyle = '#1e293b';
-        ctx.beginPath();
-        ctx.moveTo(gunX - 30, gunY);
-        ctx.lineTo(gunX + 45, gunY);
-        ctx.lineTo(gunX + 18, gunY - 105);
-        ctx.lineTo(gunX - 14, gunY - 105);
-        ctx.closePath();
-        ctx.fill();
-        ctx.fillStyle = w.color;
-        ctx.fillRect(gunX - 4, gunY - 100, 10, 65);
-
-        // Tactical Crosshair
-        ctx.strokeStyle = w.color;
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.arc(this.mouse.x, this.mouse.y, 18, 0, Math.PI * 2);
-        ctx.moveTo(this.mouse.x - 26, this.mouse.y);
-        ctx.lineTo(this.mouse.x + 26, this.mouse.y);
-        ctx.moveTo(this.mouse.x, this.mouse.y - 26);
-        ctx.lineTo(this.mouse.x, this.mouse.y + 26);
-        ctx.stroke();
-    }
-
-    renderRacing(ctx) {
-        const ms = this.modeState;
-        ctx.fillStyle = '#090d16';
-        ctx.fillRect(0, 0, this.width, this.height);
-
-        // Highway asphalt
-        ctx.fillStyle = '#1e293b';
-        ctx.fillRect(180, 0, this.width - 360, this.height);
-
-        // Neon curbs
-        ctx.fillStyle = '#f97316';
-        ctx.fillRect(172, 0, 10, this.height);
-        ctx.fillRect(this.width - 182, 0, 10, this.height);
-
-        // Scrolling lane markers
-        ctx.fillStyle = 'rgba(255,255,255,0.7)';
-        for (let lane = 1; lane <= 3; lane++) {
-            const lx = 180 + lane * ((this.width - 360) / 4);
-            for (let y = -80 + ms.roadOffset; y < this.height; y += 80) {
-                ctx.fillRect(lx - 3, y, 6, 42);
-            }
-        }
-
-        // Traffic & Nitro Orbs
-        for (const t of this.entities) {
-            if (t.isOrb) {
-                ctx.fillStyle = '#38bdf8';
+            // Structural vertical wall pillars
+            ctx.strokeStyle = 'rgba(148, 163, 184, 0.15)';
+            ctx.lineWidth = 2;
+            for (let t = 0.15; t <= 0.85; t += 0.22) {
+                const px = x1 + (x2 - x1) * t;
+                const topP = 0 + (vpY - 50) * t;
+                const botP = this.height + (vpY + 95 - this.height) * t;
                 ctx.beginPath();
-                ctx.arc(t.x, t.y, 18, 0, Math.PI * 2);
-                ctx.fill();
-            } else {
-                ctx.fillStyle = t.color;
+                ctx.moveTo(px, topP);
+                ctx.lineTo(px, botP);
+                ctx.stroke();
+
+                // Cyan conduit lights
+                ctx.fillStyle = 'rgba(56, 189, 248, 0.7)';
+                ctx.fillRect(px - 1.5, topP + (botP - topP) * 0.45, 3, (botP - topP) * 0.22);
+            }
+
+            // Hazard warning diagonal stripes on bottom wall skirts
+            ctx.strokeStyle = 'rgba(234, 179, 8, 0.22)';
+            ctx.lineWidth = 3;
+            for (let i = 0; i < 6; i++) {
+                const t1 = 0.1 + i * 0.14;
+                const t2 = t1 + 0.06;
+                const px1 = x1 + (x2 - x1) * t1;
+                const px2 = x1 + (x2 - x1) * t2;
+                const by1 = this.height + (vpY + 95 - this.height) * t1;
+                const by2 = this.height + (vpY + 95 - this.height) * t2;
                 ctx.beginPath();
-                ctx.roundRect(t.x - 24, t.y - 42, 48, 84, 10);
-                ctx.fill();
-                ctx.fillStyle = '#0f172a';
-                ctx.fillRect(t.x - 18, t.y - 22, 36, 36);
+                ctx.moveTo(px1, by1 - 18);
+                ctx.lineTo(px2, by2);
+                ctx.stroke();
             }
-        }
-
-        // Player Supercar
-        ctx.save();
-        ctx.translate(ms.carX, ms.carY);
-        ctx.fillStyle = ms.nitroActive ? '#38bdf8' : '#f97316';
-        ctx.beginPath();
-        ctx.roundRect(-26, -46, 52, 92, 12);
-        ctx.fill();
-        ctx.fillStyle = '#0f172a';
-        ctx.fillRect(-20, -20, 40, 42);
-        ctx.fillStyle = '#ef4444';
-        ctx.fillRect(-22, 38, 14, 6);
-        ctx.fillRect(8, 38, 14, 6);
-        ctx.restore();
-
-        // Speedometer badge
-        ctx.fillStyle = 'rgba(15, 23, 42, 0.88)';
-        ctx.fillRect(24, this.height - 92, 135, 68);
-        ctx.font = '900 28px "Outfit", sans-serif';
-        ctx.fillStyle = ms.nitroActive ? '#38bdf8' : '#fbbf24';
-        ctx.fillText(`${Math.round(ms.speed)} KM/H`, 36, this.height - 52);
-        ctx.font = '700 12px "Inter", sans-serif';
-        ctx.fillStyle = '#94a3b8';
-        ctx.fillText(`CHECKPOINT: ${ms.checkpointTimer.toFixed(1)}s`, 36, this.height - 32);
-    }
-
-    renderFighting(ctx) {
-        const ms = this.modeState;
-        const grad = ctx.createLinearGradient(0, 0, 0, this.height);
-        grad.addColorStop(0, '#18091c');
-        grad.addColorStop(0.7, '#3b0764');
-        grad.addColorStop(1, '#090d16');
-        ctx.fillStyle = grad;
-        ctx.fillRect(0, 0, this.width, this.height);
-
-        // Crimson Moon & Dojo Floor
-        ctx.fillStyle = 'rgba(244, 63, 94, 0.25)';
-        ctx.beginPath();
-        ctx.arc(this.width / 2, 210, 120, 0, Math.PI * 2);
-        ctx.fill();
-
-        ctx.fillStyle = '#1e1b4b';
-        ctx.fillRect(0, ms.groundY, this.width, this.height - ms.groundY);
-
-        const drawFighter = (f, color, name, isPlayer) => {
-            ctx.save();
-            ctx.translate(f.x, f.y);
-            ctx.fillStyle = color;
-            // Torso & Head
-            ctx.fillRect(-20, -78, 40, 52);
-            ctx.beginPath();
-            ctx.arc(0, -94, 16, 0, Math.PI * 2);
-            ctx.fill();
-            // Legs
-            ctx.fillRect(-18, -26, 14, 26);
-            ctx.fillRect(4, -26, 14, 26);
-            // Attack limb
-            if (f.state !== 'idle') {
-                ctx.fillStyle = '#fbbf24';
-                ctx.fillRect(f.dir > 0 ? 20 : -68, -68, 48, 14);
-            }
-            ctx.font = '700 13px "Outfit", sans-serif';
-            ctx.fillStyle = '#ffffff';
-            ctx.textAlign = 'center';
-            ctx.fillText(name, 0, -118);
             ctx.restore();
         };
 
-        drawFighter(ms.player, '#38bdf8', 'YOU (IRON FIST)', true);
-        drawFighter(ms.rival, '#f43f5e', `${ms.rival.name} (${Math.ceil(ms.rival.hp)} HP)`, false);
+        drawWall(true);
+        drawWall(false);
 
-        for (const b of this.projectiles) {
-            ctx.fillStyle = b.color;
+        // Center distance blast doors
+        ctx.fillStyle = '#0a0e1c';
+        ctx.fillRect(vpX - 138, vpY - 48, 276, 142);
+        ctx.strokeStyle = 'rgba(239, 68, 68, 0.4)';
+        ctx.strokeRect(vpX - 130, vpY - 42, 260, 130);
+        ctx.font = '900 13px "Outfit", sans-serif';
+        ctx.fillStyle = 'rgba(239, 68, 68, 0.75)';
+        ctx.textAlign = 'center';
+        ctx.fillText('⚡ SECTOR 7 // COMBAT ACTIVE ⚡', vpX, vpY + 20);
+
+        // 2. Cyborg Commando Enemies (3D Shaded Soldier Rig)
+        const sortedEnemies = [...this.entities].sort((a, b) => a.y - b.y);
+
+        for (const e of sortedEnemies) {
+            ctx.save();
+            ctx.translate(e.x, e.y);
+            const scale = Math.max(0.65, e.r / 30);
+            ctx.scale(scale, scale);
+
+            // Ground ambient occlusion drop shadow
+            this.drawDropShadow(ctx, 0, 32, 34, 12, 0.45);
+
+            // Hit flash white
+            const flash = e.hitFlash > 0;
+            const primaryColor = flash ? '#ffffff' : (e.boss ? '#9333ea' : '#1e293b');
+            const accentColor = flash ? '#fde047' : (e.boss ? '#c084fc' : '#ef4444');
+
+            // Armored Legs
+            ctx.fillStyle = flash ? '#ffffff' : '#0f172a';
+            ctx.fillRect(-16, 6, 12, 26);
+            ctx.fillRect(4, 6, 12, 26);
+            ctx.fillStyle = accentColor;
+            ctx.fillRect(-17, 14, 14, 6);
+            ctx.fillRect(3, 14, 14, 6);
+
+            // Armored Torso with Carbon-Fiber Chest Rig
+            const chestGrad = ctx.createLinearGradient(-22, -28, 22, 10);
+            chestGrad.addColorStop(0, primaryColor);
+            chestGrad.addColorStop(1, '#090d16');
+            ctx.fillStyle = chestGrad;
             ctx.beginPath();
-            ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2);
+            ctx.roundRect(-22, -26, 44, 34, 6);
             ctx.fill();
+            ctx.strokeStyle = accentColor;
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+
+            // Glowing reactor core on chest
+            this.drawGlow(ctx, 0, -10, 14, accentColor, 0.65);
+            ctx.fillStyle = '#ffffff';
+            ctx.beginPath();
+            ctx.arc(0, -10, 4, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Tactical Commando Helmet & Glowing Visor
+            ctx.fillStyle = flash ? '#ffffff' : '#0a0f1d';
+            ctx.beginPath();
+            ctx.arc(0, -42, 16, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = accentColor;
+            ctx.fillRect(-10, -56, 20, 6);
+
+            // Visor Lens with Horizontal Optical Bloom Flare
+            const visorColor = flash ? '#ffffff' : (e.boss ? '#e879f9' : '#38bdf8');
+            ctx.fillStyle = visorColor;
+            ctx.fillRect(-12, -44, 24, 6);
+            this.drawGlow(ctx, 0, -41, 18, visorColor, 0.7);
+
+            // Submachine Gun / Rifle in Enemy Hands
+            ctx.fillStyle = '#050811';
+            ctx.fillRect(8, -14, 28, 7);
+            ctx.fillRect(16, -7, 6, 10);
+
+            // Floating HP Bar
+            ctx.fillStyle = 'rgba(2, 6, 18, 0.85)';
+            ctx.fillRect(-32, -68, 64, 7);
+            const hpPct = Math.max(0, e.hp / e.maxHp);
+            const hpGrad = ctx.createLinearGradient(-32, 0, 32, 0);
+            hpGrad.addColorStop(0, '#ef4444');
+            hpGrad.addColorStop(0.5, '#eab308');
+            hpGrad.addColorStop(1, '#22c55e');
+            ctx.fillStyle = e.boss ? '#a855f7' : hpGrad;
+            ctx.fillRect(-32, -68, 64 * hpPct, 7);
+            ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+            ctx.lineWidth = 1;
+            ctx.strokeRect(-32, -68, 64, 7);
+
+            if (e.boss) {
+                ctx.font = '900 10px "Outfit", sans-serif';
+                ctx.fillStyle = '#c084fc';
+                ctx.textAlign = 'center';
+                ctx.fillText('MECH CYBORG PRIME', 0, -74);
+            }
+
+            ctx.restore();
         }
+
+        // Enemy Projectiles
+        for (const ep of this.enemyProjectiles) {
+            ctx.save();
+            this.drawGlow(ctx, ep.x, ep.y, 16, '#ef4444', 0.7);
+            ctx.fillStyle = '#ffffff';
+            ctx.beginPath();
+            ctx.arc(ep.x, ep.y, 4, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+        }
+
+        // 3. Photorealistic 3D First-Person Weapon Model
+        const gunBaseX = this.width / 2 + (this.mouse.x - this.width / 2) * 0.18;
+        const gunBaseY = this.height + 25 + ms.recoil * 1.5;
+
+        ctx.save();
+        ctx.translate(gunBaseX, gunBaseY);
+
+        this.drawDropShadow(ctx, 0, -20, 120, 40, 0.45);
+
+        // Main Rifle Chassis & Receiver
+        const gunGrad = ctx.createLinearGradient(-60, -180, 70, 0);
+        gunGrad.addColorStop(0, '#334155');
+        gunGrad.addColorStop(0.3, '#1e293b');
+        gunGrad.addColorStop(0.7, '#0f172a');
+        gunGrad.addColorStop(1, '#05070e');
+        ctx.fillStyle = gunGrad;
+
+        ctx.beginPath();
+        ctx.moveTo(-45, 0);
+        ctx.lineTo(-32, -130);
+        ctx.lineTo(24, -130);
+        ctx.lineTo(48, 0);
+        ctx.closePath();
+        ctx.fill();
+
+        // Top Tactical Picatinny Rail
+        ctx.fillStyle = '#0f172a';
+        ctx.fillRect(-22, -148, 40, 18);
+        ctx.strokeStyle = '#475569';
+        ctx.lineWidth = 1.5;
+        for (let rx = -20; rx < 16; rx += 6) {
+            ctx.strokeRect(rx, -148, 4, 18);
+        }
+
+        // Barrel & Shroud
+        const barrelGrad = ctx.createLinearGradient(-12, -210, 12, -140);
+        barrelGrad.addColorStop(0, '#64748b');
+        barrelGrad.addColorStop(0.5, '#1e293b');
+        barrelGrad.addColorStop(1, '#0f172a');
+        ctx.fillStyle = barrelGrad;
+        ctx.fillRect(-12, -200, 24, 55);
+
+        // Holographic Scope Frame
+        ctx.fillStyle = '#090d16';
+        ctx.beginPath();
+        ctx.roundRect(-26, -185, 48, 38, 8);
+        ctx.fill();
+        ctx.strokeStyle = w.color;
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        // Scope Glass Tint
+        const scopeGlass = ctx.createLinearGradient(0, -185, 0, -147);
+        scopeGlass.addColorStop(0, 'rgba(56, 189, 248, 0.3)');
+        scopeGlass.addColorStop(1, 'rgba(15, 23, 42, 0.6)');
+        ctx.fillStyle = scopeGlass;
+        ctx.beginPath();
+        ctx.roundRect(-22, -181, 40, 30, 5);
+        ctx.fill();
+
+        // Live OLED Digital Ammo Display Screen on Gun Stock
+        ctx.fillStyle = '#020617';
+        ctx.fillRect(-22, -88, 44, 22);
+        ctx.strokeStyle = 'rgba(56, 189, 248, 0.4)';
+        ctx.strokeRect(-22, -88, 44, 22);
+
+        ctx.font = '900 12px "Outfit", sans-serif';
+        ctx.fillStyle = this.ammo > 8 ? '#22c55e' : (this.ammo > 3 ? '#eab308' : '#ef4444');
+        ctx.textAlign = 'center';
+        ctx.fillText(Math.round(this.ammo) + ' / ' + this.maxAmmo, 0, -73);
+
+        // Muzzle Flash Blast when Recoil kicks
+        if (ms.recoil > 3) {
+            const tipX = 0;
+            const tipY = -215;
+            this.drawGlow(ctx, tipX, tipY, 190, '#f97316', 0.5);
+            this.drawGlow(ctx, tipX, tipY, 95, '#fde047', 0.85);
+
+            ctx.fillStyle = '#ffffff';
+            ctx.beginPath();
+            ctx.arc(tipX, tipY, 14, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.fillStyle = '#fde047';
+            for (let a = 0; a < 8; a++) {
+                const ang = (a * Math.PI) / 4 + Math.random() * 0.2;
+                const r = 24 + Math.random() * 32;
+                ctx.beginPath();
+                ctx.moveTo(tipX, tipY);
+                ctx.lineTo(tipX + Math.cos(ang) * r, tipY + Math.sin(ang) * r);
+                ctx.lineTo(tipX + Math.cos(ang + 0.2) * (r * 0.4), tipY + Math.sin(ang + 0.2) * (r * 0.4));
+                ctx.closePath();
+                ctx.fill();
+            }
+
+            // Spent brass bullet shell ejection
+            ctx.fillStyle = '#fbbf24';
+            ctx.save();
+            ctx.translate(34, -100);
+            ctx.rotate(time * 15);
+            ctx.fillRect(-3, -7, 6, 14);
+            ctx.restore();
+        }
+
+        ctx.restore();
+
+        // 4. Tactical Holographic Crosshair HUD with Parallax Aim
+        ctx.save();
+        const mx = this.mouse.x;
+        const my = this.mouse.y;
+
+        ctx.strokeStyle = w.color;
+        ctx.lineWidth = 1.8;
+        ctx.shadowColor = w.color;
+        ctx.shadowBlur = 8;
+        ctx.beginPath();
+        ctx.arc(mx, my, 22, 0, Math.PI * 2);
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.moveTo(mx - 32, my); ctx.lineTo(mx - 10, my);
+        ctx.moveTo(mx + 10, my); ctx.lineTo(mx + 32, my);
+        ctx.moveTo(mx, my - 32); ctx.lineTo(mx, my - 10);
+        ctx.moveTo(mx, my + 10); ctx.lineTo(mx, my + 32);
+        ctx.stroke();
+
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath();
+        ctx.arc(mx, my, 2.5, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.font = '800 10px "Outfit", sans-serif';
+        ctx.fillStyle = w.color;
+        ctx.textAlign = 'left';
+        ctx.fillText('RNG 24m', mx + 28, my - 10);
+        ctx.fillText('LOCK: [OK]', mx + 28, my + 4);
+        ctx.fillText(w.name.toUpperCase(), mx + 28, my + 18);
+        ctx.restore();
     }
 
-    renderAdventure(ctx) {
+    // =========================================================================
+    // 2. NITRO APEX GT (3D Horizon, Cyberpunk City Skyline & Exotic Hypercar)
+    // =========================================================================
+    renderRacing(ctx) {
         const ms = this.modeState;
-        ctx.fillStyle = '#131624';
-        ctx.fillRect(0, 0, this.width, this.height);
+        const time = this.timeElapsed;
+        const horizonY = 185;
 
-        // Dungeon tiles
-        ctx.strokeStyle = 'rgba(148, 163, 184, 0.08)';
-        for (let x = 0; x < this.width; x += 60) {
-            ctx.strokeRect(x, 0, 60, this.height);
+        // 1. Twilight / Cyberpunk Sunset Sky
+        const skyGrad = ctx.createLinearGradient(0, 0, 0, horizonY);
+        skyGrad.addColorStop(0, '#060814');
+        skyGrad.addColorStop(0.4, '#1b0f38');
+        skyGrad.addColorStop(0.8, '#581c87');
+        skyGrad.addColorStop(1, '#ea580c');
+        ctx.fillStyle = skyGrad;
+        ctx.fillRect(0, 0, this.width, horizonY);
+
+        ctx.fillStyle = 'rgba(251, 146, 60, 0.4)';
+        ctx.beginPath();
+        ctx.arc(this.width / 2, horizonY, 80, Math.PI, 0);
+        ctx.fill();
+        this.drawGlow(ctx, this.width / 2, horizonY, 140, 'rgba(251, 146, 60, 0.35)', 0.5);
+
+        // Parallax Cyberpunk City Skyline
+        ctx.fillStyle = '#090d1a';
+        for (let i = 0; i < 22; i++) {
+            const bx = i * 46;
+            const bh = 55 + ((i * 37) % 85);
+            ctx.fillRect(bx, horizonY - bh, 42, bh);
+
+            ctx.fillStyle = (i % 3 === 0) ? 'rgba(56, 189, 248, 0.65)' : 'rgba(251, 191, 36, 0.4)';
+            for (let wy = horizonY - bh + 6; wy < horizonY - 8; wy += 9) {
+                for (let wx = bx + 5; wx < bx + 36; wx += 8) {
+                    if ((wx + wy) % 5 !== 0) {
+                        ctx.fillRect(wx, wy, 4, 4);
+                    }
+                }
+            }
+            ctx.fillStyle = '#090d1a';
         }
 
-        // Pickups
-        for (const p of this.pickups) {
-            ctx.fillStyle = p.type === 'chest' ? '#fbbf24' : '#38bdf8';
+        // Animated Rooftop Neon Billboards
+        ctx.font = '900 11px "Outfit", sans-serif';
+        ctx.fillStyle = '#38bdf8';
+        ctx.fillText('NEXUS GT', 160, horizonY - 110);
+        ctx.fillStyle = '#f43f5e';
+        ctx.fillText('OCTANE 99', 680, horizonY - 95);
+
+        // 2. 3D Perspective Road & Curved Vanishing Point
+        const roadW_horizon = 120;
+        const roadLeft_bottom = 80;
+        const roadRight_bottom = this.width - 80;
+        const roadLeft_top = this.width / 2 - roadW_horizon / 2;
+        const roadRight_top = this.width / 2 + roadW_horizon / 2;
+
+        ctx.beginPath();
+        ctx.moveTo(roadLeft_top, horizonY);
+        ctx.lineTo(roadRight_top, horizonY);
+        ctx.lineTo(roadRight_bottom, this.height);
+        ctx.lineTo(roadLeft_bottom, this.height);
+        ctx.closePath();
+        const roadGrad = ctx.createLinearGradient(0, horizonY, 0, this.height);
+        roadGrad.addColorStop(0, '#111827');
+        roadGrad.addColorStop(0.5, '#1e293b');
+        roadGrad.addColorStop(1, '#0f172a');
+        ctx.fillStyle = roadGrad;
+        ctx.fill();
+
+        // Curbs: Alternating 3D Red-and-White Rumble Strips
+        const numSegments = 24;
+        for (let s = 0; s < numSegments; s++) {
+            const t1 = s / numSegments;
+            const t2 = (s + 1) / numSegments;
+            const y1 = horizonY + Math.pow(t1, 1.8) * (this.height - horizonY);
+            const y2 = horizonY + Math.pow(t2, 1.8) * (this.height - horizonY);
+
+            const isRed = (Math.floor(ms.distance * 0.05) + s) % 2 === 0;
+            ctx.fillStyle = isRed ? '#ef4444' : '#f8fafc';
+
+            const lx1 = roadLeft_top + (roadLeft_bottom - roadLeft_top) * t1;
+            const lx2 = roadLeft_top + (roadLeft_bottom - roadLeft_top) * t2;
+            const curbW1 = 8 + t1 * 22;
+            const curbW2 = 8 + t2 * 22;
+
             ctx.beginPath();
-            ctx.arc(p.x, p.y, p.type === 'chest' ? 11 : 6, 0, Math.PI * 2);
+            ctx.moveTo(lx1 - curbW1, y1);
+            ctx.lineTo(lx1, y1);
+            ctx.lineTo(lx2, y2);
+            ctx.lineTo(lx2 - curbW2, y2);
+            ctx.closePath();
+            ctx.fill();
+
+            const rx1 = roadRight_top + (roadRight_bottom - roadRight_top) * t1;
+            const rx2 = roadRight_top + (roadRight_bottom - roadRight_top) * t2;
+            ctx.beginPath();
+            ctx.moveTo(rx1, y1);
+            ctx.lineTo(rx1 + curbW1, y1);
+            ctx.lineTo(rx2 + curbW2, y2);
+            ctx.lineTo(rx2, y2);
+            ctx.closePath();
             ctx.fill();
         }
 
-        // Slash ring
-        if (ms.slashVisualTimer > 0) {
-            ctx.strokeStyle = 'rgba(251, 191, 36, 0.85)';
-            ctx.lineWidth = 6;
+        // Perspective Highway Lane Dividers
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.75)';
+        for (let lane = 1; lane <= 3; lane++) {
+            const laneFrac = lane / 4;
+            for (let s = 0; s < numSegments; s += 2) {
+                const t1 = s / numSegments;
+                const y1 = horizonY + Math.pow(t1, 1.8) * (this.height - horizonY);
+                const y2 = horizonY + Math.pow((s + 1) / numSegments, 1.8) * (this.height - horizonY);
+
+                const topLaneX = roadLeft_top + (roadRight_top - roadLeft_top) * laneFrac;
+                const botLaneX = roadLeft_bottom + (roadRight_bottom - roadLeft_bottom) * laneFrac;
+                const lx = topLaneX + (botLaneX - topLaneX) * t1;
+                const w = 2 + t1 * 6;
+
+                ctx.fillRect(lx - w / 2, y1, w, Math.max(3, y2 - y1));
+            }
+        }
+
+        // 3. Traffic Vehicles & Pickups
+        const sortedVehicles = [...this.entities].sort((a, b) => a.y - b.y);
+        for (const t of sortedVehicles) {
+            if (t.isOrb) {
+                this.drawGlow(ctx, t.x, t.y, 24, '#38bdf8', 0.8);
+                ctx.fillStyle = '#ffffff';
+                ctx.beginPath();
+                ctx.arc(t.x, t.y, 10, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.strokeStyle = '#38bdf8';
+                ctx.lineWidth = 3;
+                ctx.stroke();
+            } else {
+                const vScale = Math.max(0.45, (t.y - horizonY) / (this.height - horizonY));
+                const carW = 54 * vScale;
+                const carH = 92 * vScale;
+
+                ctx.save();
+                ctx.translate(t.x, t.y);
+
+                this.drawDropShadow(ctx, 0, carH * 0.45, carW * 0.7, carH * 0.25, 0.45);
+
+                const carGrad = ctx.createLinearGradient(-carW / 2, 0, carW / 2, 0);
+                carGrad.addColorStop(0, t.color || '#94a3b8');
+                carGrad.addColorStop(0.5, '#f8fafc');
+                carGrad.addColorStop(1, t.color || '#64748b');
+                ctx.fillStyle = carGrad;
+                ctx.beginPath();
+                ctx.roundRect(-carW / 2, -carH / 2, carW, carH, 8 * vScale);
+                ctx.fill();
+
+                ctx.fillStyle = '#090d16';
+                ctx.beginPath();
+                ctx.roundRect(-carW * 0.35, -carH * 0.28, carW * 0.7, carH * 0.48, 4 * vScale);
+                ctx.fill();
+
+                ctx.fillStyle = '#ef4444';
+                ctx.fillRect(-carW * 0.42, carH * 0.4, carW * 0.22, 6 * vScale);
+                ctx.fillRect(carW * 0.2, carH * 0.4, carW * 0.22, 6 * vScale);
+                this.drawGlow(ctx, -carW * 0.31, carH * 0.42, 14 * vScale, '#ef4444', 0.6);
+                this.drawGlow(ctx, carW * 0.31, carH * 0.42, 14 * vScale, '#ef4444', 0.6);
+
+                ctx.restore();
+            }
+        }
+
+        // 4. Player Exotic GT Supercar
+        ctx.save();
+        ctx.translate(ms.carX, ms.carY);
+
+        this.drawDropShadow(ctx, 0, 42, 48, 22, 0.55);
+
+        // Volumetric Headlights
+        this.drawVolumetricBeam(ctx, -22, -45, -Math.PI / 2 - 0.08, 380, 85, 'rgba(56, 189, 248, 0.45)', 0.35);
+        this.drawVolumetricBeam(ctx, 22, -45, -Math.PI / 2 + 0.08, 380, 85, 'rgba(56, 189, 248, 0.45)', 0.35);
+
+        // Tires
+        ctx.fillStyle = '#090d16';
+        ctx.fillRect(-34, 10, 10, 32);
+        ctx.fillRect(24, 10, 10, 32);
+        ctx.fillRect(-32, -38, 9, 26);
+        ctx.fillRect(23, -38, 9, 26);
+
+        // Sculpted Hypercar Body
+        const bodyGrad = ctx.createLinearGradient(-30, 0, 30, 0);
+        if (ms.nitroActive) {
+            bodyGrad.addColorStop(0, '#0284c7');
+            bodyGrad.addColorStop(0.5, '#7dd3fc');
+            bodyGrad.addColorStop(1, '#0369a1');
+        } else {
+            bodyGrad.addColorStop(0, '#ea580c');
+            bodyGrad.addColorStop(0.5, '#fdba74');
+            bodyGrad.addColorStop(1, '#c2410c');
+        }
+        ctx.fillStyle = bodyGrad;
+
+        ctx.beginPath();
+        ctx.roundRect(-28, -52, 56, 96, 14);
+        ctx.fill();
+
+        // Carbon Wing
+        ctx.fillStyle = '#0f172a';
+        ctx.fillRect(-30, 36, 60, 9);
+        ctx.fillStyle = ms.nitroActive ? '#38bdf8' : '#f97316';
+        ctx.fillRect(-32, 32, 4, 15);
+        ctx.fillRect(28, 32, 4, 15);
+
+        // Smoked Glass Canopy
+        const canopyGrad = ctx.createLinearGradient(0, -32, 0, 20);
+        canopyGrad.addColorStop(0, '#020617');
+        canopyGrad.addColorStop(0.5, '#1e293b');
+        canopyGrad.addColorStop(1, '#020617');
+        ctx.fillStyle = canopyGrad;
+        ctx.beginPath();
+        ctx.roundRect(-19, -28, 38, 52, 10);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+        ctx.stroke();
+
+        // Modern LED Taillight Bar
+        ctx.fillStyle = '#ef4444';
+        ctx.fillRect(-24, 44, 48, 5);
+        this.drawGlow(ctx, 0, 46, 32, '#ef4444', 0.85);
+
+        // Twin Afterburner Nitro Exhaust Flames
+        if (ms.nitroActive || this.keys['ArrowUp'] || this.keys['KeyW']) {
+            const flameLen = ms.nitroActive ? (42 + Math.random() * 25) : (14 + Math.random() * 10);
+            const flameColor = ms.nitroActive ? '#38bdf8' : '#f97316';
+
+            const drawFlame = (fx) => {
+                const fGrad = ctx.createLinearGradient(fx, 46, fx, 46 + flameLen);
+                fGrad.addColorStop(0, '#ffffff');
+                fGrad.addColorStop(0.3, flameColor);
+                fGrad.addColorStop(1, 'rgba(0,0,0,0)');
+                ctx.fillStyle = fGrad;
+                ctx.beginPath();
+                ctx.moveTo(fx - 5, 46);
+                ctx.lineTo(fx + 5, 46);
+                ctx.lineTo(fx, 46 + flameLen);
+                ctx.closePath();
+                ctx.fill();
+                this.drawGlow(ctx, fx, 48, 22, flameColor, 0.7);
+            };
+
+            drawFlame(-12);
+            drawFlame(12);
+        }
+
+        ctx.restore();
+
+        // 5. High-Tech Glassmorphic Speedometer
+        ctx.save();
+        ctx.translate(32, this.height - 110);
+        ctx.fillStyle = 'rgba(6, 11, 25, 0.88)';
+        ctx.beginPath();
+        ctx.roundRect(0, 0, 185, 82, 14);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(56, 189, 248, 0.3)';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+
+        ctx.font = '900 32px "Outfit", sans-serif';
+        ctx.fillStyle = ms.nitroActive ? '#38bdf8' : '#fbbf24';
+        ctx.textAlign = 'left';
+        ctx.fillText(Math.round(ms.speed) + '', 16, 42);
+        ctx.font = '800 14px "Outfit", sans-serif';
+        ctx.fillStyle = '#94a3b8';
+        ctx.fillText('KM/H', 115, 30);
+
+        ctx.fillStyle = 'rgba(15, 23, 42, 0.9)';
+        ctx.fillRect(16, 52, 150, 8);
+        const nitroPct = Math.max(0, this.ammo / 100);
+        ctx.fillStyle = ms.nitroActive ? '#38bdf8' : '#f97316';
+        ctx.fillRect(16, 52, 150 * nitroPct, 8);
+
+        ctx.font = '700 11px "Outfit", sans-serif';
+        ctx.fillStyle = '#cbd5e1';
+        ctx.fillText('NITRO: ' + Math.round(this.ammo) + '%  •  CP: ' + ms.checkpointTimer.toFixed(1) + 's', 16, 73);
+        ctx.restore();
+    }
+
+    // =========================================================================
+    // 3. SHADOW DOJO BRAWL (Twilight Dojo, Crimson Moon, Floor Reflections & Chi)
+    // =========================================================================
+    renderFighting(ctx) {
+        const ms = this.modeState;
+        const groundY = ms.groundY;
+        const time = this.timeElapsed;
+
+        const skyGrad = ctx.createLinearGradient(0, 0, 0, groundY);
+        skyGrad.addColorStop(0, '#090514');
+        skyGrad.addColorStop(0.6, '#2e0836');
+        skyGrad.addColorStop(1, '#500724');
+        ctx.fillStyle = skyGrad;
+        ctx.fillRect(0, 0, this.width, groundY);
+
+        ctx.save();
+        this.drawGlow(ctx, this.width / 2, 140, 180, 'rgba(244, 63, 94, 0.35)', 0.5);
+        const moonGrad = ctx.createRadialGradient(this.width / 2 - 25, 115, 20, this.width / 2, 140, 110);
+        moonGrad.addColorStop(0, '#fff1f2');
+        moonGrad.addColorStop(0.3, '#fda4af');
+        moonGrad.addColorStop(0.8, '#e11d48');
+        moonGrad.addColorStop(1, '#881337');
+        ctx.fillStyle = moonGrad;
+        ctx.beginPath();
+        ctx.arc(this.width / 2, 140, 105, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = 'rgba(15, 3, 20, 0.85)';
+        ctx.beginPath();
+        ctx.moveTo(0, 120);
+        ctx.quadraticCurveTo(160, 90, 310, 145);
+        ctx.quadraticCurveTo(240, 160, 0, 170);
+        ctx.fill();
+        ctx.restore();
+
+        ctx.strokeStyle = 'rgba(251, 191, 36, 0.2)';
+        ctx.lineWidth = 2;
+        for (let x = 60; x < this.width; x += 110) {
+            ctx.strokeRect(x, groundY - 180, 95, 180);
+            ctx.fillStyle = 'rgba(254, 243, 199, 0.05)';
+            ctx.fillRect(x, groundY - 180, 95, 180);
+        }
+
+        const drawLantern = (lx, ly) => {
+            ctx.fillStyle = '#e11d48';
             ctx.beginPath();
-            ctx.arc(ms.px, ms.py, ms.slashRadius, 0, Math.PI * 2);
+            ctx.roundRect(lx - 16, ly, 32, 44, 8);
+            ctx.fill();
+            this.drawGlow(ctx, lx, ly + 22, 48, 'rgba(251, 146, 60, 0.65)', 0.45);
+            ctx.fillStyle = '#fde047';
+            ctx.fillRect(lx - 5, ly + 14, 10, 16);
+        };
+        drawLantern(120, 110);
+        drawLantern(this.width - 120, 110);
+
+        ctx.fillStyle = '#f472b6';
+        for (let p = 0; p < 24; p++) {
+            const px = ((p * 47 + time * 32) % (this.width + 40)) - 20;
+            const py = (p * 29 + Math.sin(time + p) * 22 + time * 48) % (groundY - 30);
+            ctx.save();
+            ctx.translate(px, py);
+            ctx.rotate(time * 2 + p);
+            ctx.beginPath();
+            ctx.ellipse(0, 0, 6, 3, 0, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+        }
+
+        // 2. Polished Dark Mahogany Floor with Glossy Mirror Reflections!
+        const floorGrad = ctx.createLinearGradient(0, groundY, 0, this.height);
+        floorGrad.addColorStop(0, '#1c1917');
+        floorGrad.addColorStop(0.3, '#292524');
+        floorGrad.addColorStop(1, '#0c0a09');
+        ctx.fillStyle = floorGrad;
+        ctx.fillRect(0, groundY, this.width, this.height - groundY);
+
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
+        ctx.lineWidth = 1;
+        for (let y = groundY + 16; y < this.height; y += 18) {
+            ctx.beginPath();
+            ctx.moveTo(0, y);
+            ctx.lineTo(this.width, y);
             ctx.stroke();
         }
 
-        // Orbiting Fireballs
-        for (let o = 0; o < ms.orbCount; o++) {
-            const oa = ms.orbAngle + (o * Math.PI * 2) / ms.orbCount;
-            ctx.fillStyle = '#f97316';
+        // 3. Shaded Martial Artist Fighter Renderer
+        const drawFighter = (f, primaryColor, name, isPlayer, isReflection = false) => {
+            ctx.save();
+            ctx.translate(f.x, f.y);
+
+            if (isReflection) {
+                ctx.scale(1, -0.65);
+                ctx.globalAlpha = 0.22;
+            }
+
+            const dir = f.dir || 1;
+            ctx.scale(dir, 1);
+
+            if (!isReflection) {
+                this.drawDropShadow(ctx, 0, 0, 36, 12, 0.6);
+            }
+
+            if (!isReflection && (f.state === 'punch' || f.state === 'kick' || f.state === 'special')) {
+                const auraColor = isPlayer ? '#38bdf8' : '#f43f5e';
+                this.drawGlow(ctx, 32, -50, 42, auraColor, 0.85);
+            }
+
+            ctx.fillStyle = '#0f172a';
             ctx.beginPath();
-            ctx.arc(ms.px + Math.cos(oa) * 68, ms.py + Math.sin(oa) * 68, 10, 0, Math.PI * 2);
+            ctx.roundRect(-22, -38, 18, 38, 4);
+            ctx.roundRect(4, -38, 18, 38, 4);
             ctx.fill();
+
+            ctx.fillStyle = '#e2e8f0';
+            ctx.fillRect(-22, -12, 18, 12);
+            ctx.fillRect(4, -12, 18, 12);
+
+            const giGrad = ctx.createLinearGradient(-26, -92, 26, -34);
+            giGrad.addColorStop(0, primaryColor);
+            giGrad.addColorStop(1, '#090d16');
+            ctx.fillStyle = giGrad;
+            ctx.beginPath();
+            ctx.roundRect(-24, -88, 48, 54, 8);
+            ctx.fill();
+
+            ctx.fillStyle = '#020617';
+            ctx.fillRect(-26, -42, 52, 10);
+            ctx.fillRect(4, -34, 8, 22);
+            ctx.fillRect(10, -34, 8, 18);
+
+            ctx.fillStyle = '#fbcfe8';
+            if (f.state === 'punch') {
+                ctx.fillRect(14, -72, 38, 14);
+                ctx.fillStyle = primaryColor;
+                ctx.fillRect(48, -75, 16, 20);
+            } else if (f.state === 'kick') {
+                ctx.fillStyle = '#0f172a';
+                ctx.fillRect(10, -56, 42, 16);
+            } else {
+                ctx.fillRect(12, -74, 14, 26);
+                ctx.fillRect(2, -78, 14, 26);
+            }
+
+            ctx.fillStyle = '#fbcfe8';
+            ctx.beginPath();
+            ctx.arc(0, -102, 16, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.fillStyle = isPlayer ? '#ef4444' : '#eab308';
+            ctx.fillRect(-17, -112, 34, 7);
+            ctx.fillRect(-dir * 24, -112, 14, 6);
+
+            if (!isReflection) {
+                ctx.font = '900 13px "Outfit", sans-serif';
+                ctx.fillStyle = '#ffffff';
+                ctx.textAlign = 'center';
+                ctx.fillText(name, 0, -128);
+            }
+
+            ctx.restore();
+        };
+
+        drawFighter(ms.player, '#0284c7', 'YOU', true, true);
+        drawFighter(ms.rival, '#e11d48', ms.rival.name, false, true);
+
+        drawFighter(ms.player, '#0284c7', 'YOU (DRAGON STRIKE)', true, false);
+        drawFighter(ms.rival, '#e11d48', ms.rival.name + ' [ROUND ' + ms.round + ']', false, false);
+
+        for (const b of this.projectiles) {
+            ctx.save();
+            this.drawGlow(ctx, b.x, b.y, 28, '#38bdf8', 0.85);
+            ctx.fillStyle = '#ffffff';
+            ctx.beginPath();
+            ctx.arc(b.x, b.y, b.r || 12, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
         }
 
-        // Hero
+        const drawHealthGauge = (x, y, w, h, hp, maxHp, name, isLeft) => {
+            ctx.fillStyle = 'rgba(6, 11, 25, 0.88)';
+            ctx.beginPath();
+            ctx.roundRect(x, y, w, h, 8);
+            ctx.fill();
+            ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+            ctx.stroke();
+
+            const pct = Math.max(0, hp / maxHp);
+            const hpGrad = ctx.createLinearGradient(x, 0, x + w, 0);
+            hpGrad.addColorStop(0, isLeft ? '#22c55e' : '#ef4444');
+            hpGrad.addColorStop(1, isLeft ? '#eab308' : '#f97316');
+            ctx.fillStyle = hpGrad;
+            ctx.fillRect(isLeft ? x + w * (1 - pct) : x, y + 2, w * pct, h - 4);
+        };
+
+        drawHealthGauge(40, 68, 280, 16, this.health, 100, 'PLAYER', true);
+        drawHealthGauge(this.width - 320, 68, 280, 16, ms.rival.hp, ms.rival.maxHp, ms.rival.name, false);
+    }
+
+    // =========================================================================
+    // 4. DEADZONE OUTBREAK (Tactical Bunker, Flashlight Cone & Dynamic Darkness)
+    // =========================================================================
+    renderZombie(ctx) {
+        const ms = this.modeState;
+        const time = this.timeElapsed;
+
+        ctx.fillStyle = '#070a0f';
+        ctx.fillRect(0, 0, this.width, this.height);
+
+        ctx.strokeStyle = 'rgba(71, 85, 105, 0.18)';
+        ctx.lineWidth = 1.5;
+        for (let x = 0; x < this.width; x += 64) {
+            for (let y = 0; y < this.height; y += 64) {
+                ctx.strokeRect(x, y, 64, 64);
+            }
+        }
+
+        const aimAngle = Math.atan2(this.mouse.y - ms.py, this.mouse.x - ms.px);
+
+        ctx.save();
+        const flashGrad = ctx.createRadialGradient(ms.px, ms.py, 20, ms.px, ms.py, 480);
+        flashGrad.addColorStop(0, 'rgba(240, 249, 255, 0.45)');
+        flashGrad.addColorStop(0.35, 'rgba(56, 189, 248, 0.22)');
+        flashGrad.addColorStop(0.8, 'rgba(14, 165, 233, 0.08)');
+        flashGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+        ctx.fillStyle = flashGrad;
+
+        ctx.beginPath();
+        ctx.moveTo(ms.px, ms.py);
+        ctx.arc(ms.px, ms.py, 520, aimAngle - 0.52, aimAngle + 0.52);
+        ctx.closePath();
+        ctx.fill();
+
+        ctx.strokeStyle = 'rgba(239, 68, 68, 0.75)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(ms.px, ms.py);
+        ctx.lineTo(ms.px + Math.cos(aimAngle) * 580, ms.py + Math.sin(aimAngle) * 580);
+        ctx.stroke();
+
+        const beaconAngle = time * 3;
+        this.drawVolumetricBeam(ctx, this.width / 2, 40, beaconAngle, 450, 75, 'rgba(239, 68, 68, 0.35)', 0.28);
+        ctx.restore();
+
+        for (const p of this.pickups) {
+            ctx.save();
+            this.drawDropShadow(ctx, p.x, p.y + 8, 14, 6, 0.4);
+            this.drawGlow(ctx, p.x, p.y, 22, '#22c55e', 0.6);
+            ctx.fillStyle = '#22c55e';
+            ctx.beginPath();
+            ctx.roundRect(p.x - 12, p.y - 12, 24, 24, 6);
+            ctx.fill();
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(p.x - 2, p.y - 8, 4, 16);
+            ctx.fillRect(p.x - 8, p.y - 2, 16, 4);
+            ctx.restore();
+        }
+
+        for (const z of this.entities) {
+            ctx.save();
+            ctx.translate(z.x, z.y);
+            const zAngle = Math.atan2(ms.py - z.y, ms.px - z.x);
+            ctx.rotate(zAngle);
+
+            this.drawDropShadow(ctx, 0, 0, 22, 14, 0.5);
+
+            const zColor = z.boomer ? '#84cc16' : '#475569';
+            ctx.fillStyle = zColor;
+            ctx.beginPath();
+            ctx.roundRect(-16, -14, 32, 28, 6);
+            ctx.fill();
+
+            ctx.fillStyle = '#65a30d';
+            ctx.fillRect(10, -18, 18, 8);
+            ctx.fillRect(10, 10, 18, 8);
+
+            ctx.fillStyle = '#3f6212';
+            ctx.beginPath();
+            ctx.arc(0, 0, 12, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.fillStyle = '#fde047';
+            ctx.beginPath();
+            ctx.arc(6, -4, 2.5, 0, Math.PI * 2);
+            ctx.arc(6, 4, 2.5, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.restore();
+        }
+
+        ctx.save();
+        ctx.translate(ms.px, ms.py);
+        ctx.rotate(aimAngle);
+
+        this.drawDropShadow(ctx, 0, 0, 26, 16, 0.55);
+
+        ctx.fillStyle = '#1e293b';
+        ctx.beginPath();
+        ctx.roundRect(-18, -16, 36, 32, 8);
+        ctx.fill();
+
+        ctx.fillStyle = '#0f172a';
+        ctx.beginPath();
+        ctx.arc(0, 0, 14, 0, Math.PI * 2);
+        ctx.fill();
         ctx.fillStyle = '#38bdf8';
+        ctx.fillRect(6, -6, 6, 12);
+
+        ctx.fillStyle = '#020617';
+        ctx.fillRect(12, 4, 28, 6);
+
+        ctx.restore();
+
+        for (const b of this.projectiles) {
+            ctx.save();
+            this.drawGlow(ctx, b.x, b.y, 14, '#fde047', 0.85);
+            ctx.fillStyle = '#ffffff';
+            ctx.beginPath();
+            ctx.arc(b.x, b.y, 3, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+        }
+    }
+
+    // =========================================================================
+    // 5. NOVA VANGUARD 3D (Cosmic Nebulae, 3D Starfield & Cockpit HUD)
+    // =========================================================================
+    renderSpace(ctx) {
+        const ms = this.modeState;
+
+        const spaceGrad = ctx.createLinearGradient(0, 0, this.width, this.height);
+        spaceGrad.addColorStop(0, '#030712');
+        spaceGrad.addColorStop(0.4, '#1e1b4b');
+        spaceGrad.addColorStop(0.8, '#0f172a');
+        spaceGrad.addColorStop(1, '#020617');
+        ctx.fillStyle = spaceGrad;
+        ctx.fillRect(0, 0, this.width, this.height);
+
+        ctx.save();
+        const planetX = this.width - 160;
+        const planetY = 130;
+        this.drawGlow(ctx, planetX, planetY, 150, 'rgba(168, 85, 247, 0.25)', 0.5);
+        const planetGrad = ctx.createRadialGradient(planetX - 25, planetY - 25, 20, planetX, planetY, 90);
+        planetGrad.addColorStop(0, '#c084fc');
+        planetGrad.addColorStop(0.5, '#7e22ce');
+        planetGrad.addColorStop(1, '#3b0764');
+        ctx.fillStyle = planetGrad;
+        ctx.beginPath();
+        ctx.arc(planetX, planetY, 78, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.strokeStyle = 'rgba(192, 132, 252, 0.4)';
+        ctx.lineWidth = 6;
+        ctx.beginPath();
+        ctx.ellipse(planetX, planetY, 130, 22, -0.28, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+
+        for (const s of this.stars) {
+            s.x -= s.z * 3.8;
+            if (s.x < 0) {
+                s.x = this.width;
+                s.y = Math.random() * this.height;
+            }
+            const starLen = s.z * 6;
+            ctx.fillStyle = s.z > 2 ? '#38bdf8' : '#ffffff';
+            ctx.fillRect(s.x, s.y, starLen, s.z);
+        }
+
+        for (const e of this.entities) {
+            ctx.save();
+            ctx.translate(e.x, e.y);
+
+            const isBoss = e.boss;
+            const shipColor = isBoss ? '#c084fc' : '#f43f5e';
+
+            this.drawGlow(ctx, 24, 0, 18, shipColor, 0.7);
+
+            ctx.fillStyle = isBoss ? '#581c87' : '#881337';
+            ctx.beginPath();
+            ctx.moveTo(-28, 0);
+            ctx.lineTo(24, -22);
+            ctx.lineTo(12, 0);
+            ctx.lineTo(24, 22);
+            ctx.closePath();
+            ctx.fill();
+
+            ctx.fillStyle = '#ffffff';
+            ctx.beginPath();
+            ctx.arc(-8, 0, 5, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.restore();
+        }
+
+        ctx.save();
+        ctx.translate(ms.shipX, ms.shipY);
+
+        const thrusterLen = 32 + Math.random() * 20;
+        const thrusterGrad = ctx.createLinearGradient(0, 0, -thrusterLen, 0);
+        thrusterGrad.addColorStop(0, '#ffffff');
+        thrusterGrad.addColorStop(0.3, '#38bdf8');
+        thrusterGrad.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = thrusterGrad;
+        ctx.beginPath();
+        ctx.moveTo(-16, -8);
+        ctx.lineTo(-16 - thrusterLen, 0);
+        ctx.lineTo(-16, 8);
+        ctx.closePath();
+        ctx.fill();
+        this.drawGlow(ctx, -18, 0, 26, '#38bdf8', 0.85);
+
+        const hullGrad = ctx.createLinearGradient(34, 0, -24, 0);
+        hullGrad.addColorStop(0, '#f8fafc');
+        hullGrad.addColorStop(0.4, '#38bdf8');
+        hullGrad.addColorStop(1, '#0f172a');
+        ctx.fillStyle = hullGrad;
+
+        ctx.beginPath();
+        ctx.moveTo(34, 0);
+        ctx.lineTo(-24, -26);
+        ctx.lineTo(-14, 0);
+        ctx.lineTo(-24, 26);
+        ctx.closePath();
+        ctx.fill();
+
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath();
+        ctx.ellipse(8, 0, 10, 4, 0, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.restore();
+
+        for (const b of this.projectiles) {
+            ctx.save();
+            this.drawGlow(ctx, b.x, b.y, 16, '#38bdf8', 0.8);
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(b.x - 14, b.y - 3, 28, 6);
+            ctx.restore();
+        }
+
+        ctx.save();
+        ctx.strokeStyle = 'rgba(56, 189, 248, 0.25)';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(this.width / 2 - 80, this.height / 2 - 40);
+        ctx.lineTo(this.width / 2 - 40, this.height / 2 - 40);
+        ctx.moveTo(this.width / 2 + 40, this.height / 2 - 40);
+        ctx.lineTo(this.width / 2 + 80, this.height / 2 - 40);
+        ctx.stroke();
+
+        ctx.font = '800 12px "Outfit", sans-serif';
+        ctx.fillStyle = '#38bdf8';
+        ctx.fillText('WARP: READY  •  TORPEDOES: ' + this.ammo, 40, this.height - 40);
+        ctx.restore();
+    }
+
+    // =========================================================================
+    // 6. EMBERFALL SURVIVORS (Dungeon Flagstones, Arcane Runes & Elemental Spells)
+    // =========================================================================
+    renderAdventure(ctx) {
+        const ms = this.modeState;
+        const time = this.timeElapsed;
+
+        ctx.fillStyle = '#0b0f19';
+        ctx.fillRect(0, 0, this.width, this.height);
+
+        ctx.strokeStyle = 'rgba(100, 116, 139, 0.12)';
+        ctx.lineWidth = 2;
+        for (let x = 0; x < this.width; x += 72) {
+            for (let y = 0; y < this.height; y += 72) {
+                ctx.strokeRect(x, y, 72, 72);
+            }
+        }
+
+        ctx.save();
+        ctx.translate(this.width / 2, this.height / 2);
+        ctx.rotate(time * 0.15);
+        ctx.strokeStyle = 'rgba(168, 85, 247, 0.18)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(0, 0, 180, 0, Math.PI * 2);
+        ctx.stroke();
+        for (let a = 0; a < 6; a++) {
+            const ang = (a * Math.PI) / 3;
+            ctx.beginPath();
+            ctx.arc(Math.cos(ang) * 180, Math.sin(ang) * 180, 16, 0, Math.PI * 2);
+            ctx.stroke();
+        }
+        ctx.restore();
+
+        for (const p of this.pickups) {
+            ctx.save();
+            this.drawDropShadow(ctx, p.x, p.y + 6, 12, 5, 0.4);
+            if (p.type === 'chest') {
+                this.drawGlow(ctx, p.x, p.y, 28, '#fbbf24', 0.8);
+                ctx.fillStyle = '#f59e0b';
+                ctx.beginPath();
+                ctx.roundRect(p.x - 14, p.y - 10, 28, 20, 4);
+                ctx.fill();
+                ctx.fillStyle = '#fde047';
+                ctx.fillRect(p.x - 3, p.y - 4, 6, 8);
+            } else {
+                this.drawGlow(ctx, p.x, p.y, 16, '#38bdf8', 0.7);
+                ctx.fillStyle = '#38bdf8';
+                ctx.beginPath();
+                ctx.moveTo(p.x, p.y - 8);
+                ctx.lineTo(p.x + 6, p.y);
+                ctx.lineTo(p.x, p.y + 8);
+                ctx.lineTo(p.x - 6, p.y);
+                ctx.closePath();
+                ctx.fill();
+            }
+            ctx.restore();
+        }
+
+        for (const e of this.entities) {
+            ctx.save();
+            this.drawDropShadow(ctx, e.x, e.y + e.r * 0.8, e.r * 0.8, e.r * 0.35, 0.45);
+
+            const mGrad = ctx.createRadialGradient(e.x - 4, e.y - 4, 2, e.x, e.y, e.r);
+            mGrad.addColorStop(0, '#f87171');
+            mGrad.addColorStop(1, '#991b1b');
+            ctx.fillStyle = mGrad;
+            ctx.beginPath();
+            ctx.arc(e.x, e.y, e.r, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.fillStyle = '#fde047';
+            ctx.beginPath();
+            ctx.arc(e.x - 4, e.y - 2, 2.5, 0, Math.PI * 2);
+            ctx.arc(e.x + 4, e.y - 2, 2.5, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+        }
+
+        ctx.save();
+        this.drawDropShadow(ctx, ms.px, ms.py + 18, 22, 9, 0.55);
+
+        const mageGrad = ctx.createLinearGradient(ms.px, ms.py - 24, ms.px, ms.py + 18);
+        mageGrad.addColorStop(0, '#0284c7');
+        mageGrad.addColorStop(1, '#1e1b4b');
+        ctx.fillStyle = mageGrad;
         ctx.beginPath();
         ctx.arc(ms.px, ms.py, 18, 0, Math.PI * 2);
         ctx.fill();
 
-        // Monsters
-        for (const e of this.entities) {
-            ctx.fillStyle = e.color;
+        ctx.fillStyle = '#38bdf8';
+        ctx.fillRect(ms.px - 5, ms.py - 4, 3, 3);
+        ctx.fillRect(ms.px + 2, ms.py - 4, 3, 3);
+        ctx.restore();
+
+        for (let o = 0; o < ms.orbCount; o++) {
+            const oa = ms.orbAngle + (o * Math.PI * 2) / ms.orbCount;
+            const ox = ms.px + Math.cos(oa) * 75;
+            const oy = ms.py + Math.sin(oa) * 75;
+
+            this.drawGlow(ctx, ox, oy, 26, '#f97316', 0.85);
+            ctx.fillStyle = '#fde047';
             ctx.beginPath();
-            ctx.arc(e.x, e.y, e.r, 0, Math.PI * 2);
+            ctx.arc(ox, oy, 9, 0, Math.PI * 2);
             ctx.fill();
+        }
+
+        if (ms.slashVisualTimer > 0) {
+            ctx.save();
+            ctx.strokeStyle = 'rgba(251, 191, 36, 0.8)';
+            ctx.lineWidth = 5;
+            ctx.beginPath();
+            ctx.arc(ms.px, ms.py, ms.slashRadius, 0, Math.PI * 2);
+            ctx.stroke();
+            this.drawGlow(ctx, ms.px, ms.py, ms.slashRadius + 20, '#f59e0b', 0.6);
+            ctx.restore();
         }
     }
 
-    renderZombie(ctx) {
+    // =========================================================================
+    // 7. STREET HOOPS PRO (Glossy Hardwood Parquet, Glass Backboard & Ball Spin)
+    // =========================================================================
+    renderHoops(ctx) {
         const ms = this.modeState;
-        ctx.fillStyle = '#060b0e';
-        ctx.fillRect(0, 0, this.width, this.height);
+        const courtY = 415;
+        const time = this.timeElapsed;
 
-        // Tactical Flashlight Cone
-        const aimAngle = Math.atan2(this.mouse.y - ms.py, this.mouse.x - ms.px);
-        ctx.save();
-        ctx.fillStyle = 'rgba(56, 189, 248, 0.13)';
+        const arenaGrad = ctx.createLinearGradient(0, 0, 0, courtY);
+        arenaGrad.addColorStop(0, '#050814');
+        arenaGrad.addColorStop(0.7, '#111827');
+        arenaGrad.addColorStop(1, '#1e293b');
+        ctx.fillStyle = arenaGrad;
+        ctx.fillRect(0, 0, this.width, courtY);
+
+        this.drawGlow(ctx, 220, 60, 110, 'rgba(255, 255, 255, 0.35)', 0.45);
+        this.drawGlow(ctx, 740, 60, 110, 'rgba(255, 255, 255, 0.35)', 0.45);
+
+        ctx.fillStyle = 'rgba(8, 12, 22, 0.7)';
+        for (let c = 0; c < 36; c++) {
+            const cx = c * 28;
+            const ch = 28 + (c % 5) * 8 + Math.sin(time * 4 + c) * 4;
+            ctx.beginPath();
+            ctx.arc(cx, courtY - ch, 9, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        // Glossy Hardwood Parquet Floor
+        const woodGrad = ctx.createLinearGradient(0, courtY, 0, this.height);
+        woodGrad.addColorStop(0, '#d97706');
+        woodGrad.addColorStop(0.5, '#b45309');
+        woodGrad.addColorStop(1, '#78350f');
+        ctx.fillStyle = woodGrad;
+        ctx.fillRect(0, courtY, this.width, this.height - courtY);
+
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.18)';
+        ctx.lineWidth = 1;
+        for (let y = courtY + 12; y < this.height; y += 14) {
+            ctx.beginPath();
+            ctx.moveTo(0, y);
+            ctx.lineTo(this.width, y);
+            ctx.stroke();
+        }
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 3;
         ctx.beginPath();
-        ctx.moveTo(ms.px, ms.py);
-        ctx.arc(ms.px, ms.py, 420, aimAngle - 0.48, aimAngle + 0.48);
-        ctx.closePath();
+        ctx.arc(ms.hoopX - 160, courtY + 45, 95, -Math.PI / 2, Math.PI / 2);
+        ctx.stroke();
+
+        // 3. Regulation Glass Backboard, Rim & Mesh Net
+        ctx.fillStyle = '#0f172a';
+        ctx.fillRect(ms.hoopX + 36, 220, 16, courtY - 220);
+
+        ctx.fillStyle = 'rgba(240, 249, 255, 0.28)';
+        ctx.fillRect(ms.hoopX + 22, 140, 14, 110);
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 2.5;
+        ctx.strokeRect(ms.hoopX + 22, 140, 14, 110);
+        ctx.strokeRect(ms.hoopX + 22, 175, 14, 40);
+
+        ctx.strokeStyle = '#f97316';
+        ctx.lineWidth = 6;
+        ctx.beginPath();
+        ctx.moveTo(ms.hoopX - 26, ms.hoopY);
+        ctx.lineTo(ms.hoopX + 22, ms.hoopY);
+        ctx.stroke();
+
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.85)';
+        ctx.lineWidth = 1.5;
+        const netTop = ms.hoopY;
+        const netBot = ms.hoopY + 36;
+        for (let nx = ms.hoopX - 22; nx <= ms.hoopX + 18; nx += 8) {
+            ctx.beginPath();
+            ctx.moveTo(nx, netTop);
+            ctx.lineTo(nx + 3, netBot);
+            ctx.stroke();
+        }
+
+        // 4. Basketball Players
+        ctx.save();
+        this.drawDropShadow(ctx, ms.playerX, courtY, 26, 8, 0.5);
+        ctx.fillStyle = '#0284c7';
+        ctx.beginPath();
+        ctx.roundRect(ms.playerX - 16, ms.playerY - 68, 32, 42, 6);
+        ctx.fill();
+        ctx.fillStyle = '#0f172a';
+        ctx.fillRect(ms.playerX - 16, ms.playerY - 26, 32, 26);
+        ctx.fillStyle = '#fbcfe8';
+        ctx.beginPath();
+        ctx.arc(ms.playerX, ms.playerY - 82, 14, 0, Math.PI * 2);
         ctx.fill();
         ctx.restore();
 
-        for (const p of this.pickups) {
-            ctx.fillStyle = '#22c55e';
-            ctx.fillRect(p.x - 10, p.y - 10, 20, 20);
-        }
-
-        for (const b of this.projectiles) {
-            ctx.fillStyle = '#fde047';
-            ctx.beginPath();
-            ctx.arc(b.x, b.y, 4, 0, Math.PI * 2);
-            ctx.fill();
-        }
-
-        for (const z of this.entities) {
-            ctx.fillStyle = z.boomer ? '#22c55e' : '#84cc16';
-            ctx.beginPath();
-            ctx.arc(z.x, z.y, z.r, 0, Math.PI * 2);
-            ctx.fill();
-        }
-
-        ctx.fillStyle = '#38bdf8';
+        ctx.save();
+        this.drawDropShadow(ctx, ms.defenderX, courtY, 26, 8, 0.5);
+        ctx.fillStyle = '#dc2626';
         ctx.beginPath();
-        ctx.arc(ms.px, ms.py, 16, 0, Math.PI * 2);
+        ctx.roundRect(ms.defenderX - 16, ms.defenderY - 72, 32, 44, 6);
         ctx.fill();
-    }
-
-    renderHoops(ctx) {
-        const ms = this.modeState;
         ctx.fillStyle = '#0f172a';
-        ctx.fillRect(0, 0, this.width, this.height);
-        ctx.fillStyle = '#1e293b';
-        ctx.fillRect(0, 425, this.width, 115);
-
-        // Hoop & Backboard
-        ctx.fillStyle = '#e2e8f0';
-        ctx.fillRect(ms.hoopX + 26, 155, 10, 95);
-        ctx.fillRect(ms.hoopX + 32, 250, 14, 185);
-        ctx.strokeStyle = '#f97316';
-        ctx.lineWidth = 5;
+        ctx.fillRect(ms.defenderX - 16, ms.defenderY - 28, 32, 28);
+        ctx.fillStyle = '#fbcfe8';
         ctx.beginPath();
-        ctx.moveTo(ms.hoopX - 22, ms.hoopY);
-        ctx.lineTo(ms.hoopX + 26, ms.hoopY);
-        ctx.stroke();
+        ctx.arc(ms.defenderX, ms.defenderY - 86, 14, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
 
-        // Player & Defender
-        ctx.fillStyle = '#38bdf8';
-        ctx.fillRect(ms.playerX - 16, ms.playerY - 68, 32, 68);
-        ctx.fillStyle = '#ef4444';
-        ctx.fillRect(ms.defenderX - 16, ms.defenderY - 72, 32, 72);
+        // 5. Basketballs with Seam Grooves & Angular Spin
+        for (const b of ms.balls) {
+            ctx.save();
+            ctx.translate(b.x, b.y);
+            ctx.rotate(time * 8);
 
-        // Power Meter when charging
-        if (ms.charging) {
-            ctx.fillStyle = '#0f172a';
-            ctx.fillRect(ms.playerX - 28, ms.playerY - 95, 56, 12);
-            ctx.fillStyle = Math.abs(ms.power - 80) <= 10 ? '#22c55e' : '#f97316';
-            ctx.fillRect(ms.playerX - 28, ms.playerY - 95, (ms.power / 100) * 56, 12);
+            this.drawDropShadow(ctx, 0, courtY - b.y, 16, 6, 0.35);
+
+            const ballGrad = ctx.createRadialGradient(-4, -4, 2, 0, 0, 14);
+            ballGrad.addColorStop(0, '#fb923c');
+            ballGrad.addColorStop(0.7, '#ea580c');
+            ballGrad.addColorStop(1, '#9a3412');
+            ctx.fillStyle = ballGrad;
+            ctx.beginPath();
+            ctx.arc(0, 0, 14, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.strokeStyle = '#18181b';
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.arc(0, 0, 14, 0, Math.PI * 2);
+            ctx.moveTo(-14, 0); ctx.lineTo(14, 0);
+            ctx.moveTo(0, -14); ctx.lineTo(0, 14);
+            ctx.stroke();
+
+            ctx.restore();
         }
 
-        for (const b of ms.balls) {
-            ctx.fillStyle = ms.streak >= 3 ? '#ef4444' : '#f97316';
+        if (ms.charging) {
+            ctx.save();
+            ctx.fillStyle = 'rgba(6, 11, 25, 0.9)';
             ctx.beginPath();
-            ctx.arc(b.x, b.y, 13, 0, Math.PI * 2);
+            ctx.roundRect(ms.playerX - 35, ms.playerY - 118, 70, 14, 6);
             ctx.fill();
+            const pPct = ms.power / 100;
+            ctx.fillStyle = Math.abs(ms.power - 80) <= 10 ? '#22c55e' : '#f97316';
+            ctx.fillRect(ms.playerX - 33, ms.playerY - 116, 66 * pPct, 10);
+            ctx.restore();
         }
     }
 
+    // =========================================================================
+    // 8. MOTO XTREME TRIALS (Rocky Quarry, Dirt Bike Suspension & Rider Physics)
+    // =========================================================================
     renderMoto(ctx) {
         const ms = this.modeState;
-        ctx.fillStyle = '#0c0a1d';
+        const time = this.timeElapsed;
+
+        const skyGrad = ctx.createLinearGradient(0, 0, 0, this.height);
+        skyGrad.addColorStop(0, '#0c0a1d');
+        skyGrad.addColorStop(0.5, '#311042');
+        skyGrad.addColorStop(1, '#7c2d12');
+        ctx.fillStyle = skyGrad;
         ctx.fillRect(0, 0, this.width, this.height);
 
-        // Terrain polygon
-        ctx.fillStyle = '#312e81';
+        ctx.fillStyle = '#1c1917';
         ctx.beginPath();
         ctx.moveTo(0, this.height);
-        for (let x = 0; x <= this.width; x += 20) {
+        for (let x = 0; x <= this.width; x += 15) {
             ctx.lineTo(x, this.terrainHeightAt(ms.scrollX + x));
         }
         ctx.lineTo(this.width, this.height);
         ctx.closePath();
         ctx.fill();
 
-        // Stunt Bike
-        ctx.save();
-        ctx.translate(ms.bikeX, ms.bikeY - 14);
-        ctx.rotate(ms.angle);
-        ctx.fillStyle = '#0f172a';
+        ctx.strokeStyle = '#ea580c';
+        ctx.lineWidth = 4;
         ctx.beginPath();
-        ctx.arc(-22, 12, 14, 0, Math.PI * 2);
-        ctx.arc(22, 12, 14, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.fillStyle = '#f97316';
-        ctx.fillRect(-20, -10, 40, 14);
-        ctx.restore();
-    }
-
-    renderSpace(ctx) {
-        const ms = this.modeState;
-        ctx.fillStyle = '#050814';
-        ctx.fillRect(0, 0, this.width, this.height);
-
-        ctx.fillStyle = '#ffffff';
-        for (const s of this.stars) {
-            s.x -= s.z * 2.5;
-            if (s.x < 0) s.x = this.width;
-            ctx.fillRect(s.x, s.y, s.z, s.z);
+        for (let x = 0; x <= this.width; x += 15) {
+            const ty = this.terrainHeightAt(ms.scrollX + x);
+            if (x === 0) ctx.moveTo(x, ty);
+            else ctx.lineTo(x, ty);
         }
+        ctx.stroke();
 
-        // Player Starfighter
-        ctx.fillStyle = '#38bdf8';
+        ctx.save();
+        ctx.translate(ms.bikeX, ms.bikeY - 16);
+        ctx.rotate(ms.angle);
+
+        this.drawDropShadow(ctx, 0, 24, 38, 12, 0.45);
+
+        const drawWheel = (wx, wy) => {
+            ctx.save();
+            ctx.translate(wx, wy);
+            ctx.rotate(time * 18);
+
+            ctx.strokeStyle = '#090d16';
+            ctx.lineWidth = 8;
+            ctx.beginPath();
+            ctx.arc(0, 0, 16, 0, Math.PI * 2);
+            ctx.stroke();
+
+            ctx.strokeStyle = '#94a3b8';
+            ctx.lineWidth = 1.2;
+            for (let a = 0; a < 6; a++) {
+                const ang = (a * Math.PI) / 3;
+                ctx.beginPath();
+                ctx.moveTo(0, 0);
+                ctx.lineTo(Math.cos(ang) * 14, Math.sin(ang) * 14);
+                ctx.stroke();
+            }
+            ctx.restore();
+        };
+
+        drawWheel(-26, 14);
+        drawWheel(26, 14);
+
+        ctx.strokeStyle = '#38bdf8';
+        ctx.lineWidth = 4;
         ctx.beginPath();
-        ctx.moveTo(ms.shipX + 30, ms.shipY);
-        ctx.lineTo(ms.shipX - 22, ms.shipY - 20);
-        ctx.lineTo(ms.shipX - 12, ms.shipY);
-        ctx.lineTo(ms.shipX - 22, ms.shipY + 20);
+        ctx.moveTo(12, -18);
+        ctx.lineTo(26, 14);
+        ctx.stroke();
+
+        ctx.fillStyle = '#64748b';
+        ctx.fillRect(-10, 2, 20, 14);
+        ctx.strokeStyle = '#cbd5e1';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(-6, 8);
+        ctx.lineTo(-24, 2);
+        ctx.stroke();
+
+        ctx.fillStyle = '#f97316';
+        ctx.beginPath();
+        ctx.moveTo(-22, -8);
+        ctx.lineTo(16, -18);
+        ctx.lineTo(2, 4);
         ctx.closePath();
         ctx.fill();
 
-        for (const b of this.projectiles) {
-            ctx.fillStyle = '#38bdf8';
-            ctx.fillRect(b.x - 8, b.y - 2, 16, 4);
-        }
+        ctx.fillStyle = '#0284c7';
+        ctx.beginPath();
+        ctx.roundRect(-8, -38, 16, 26, 4);
+        ctx.fill();
 
-        for (const e of this.entities) {
-            ctx.fillStyle = e.boss ? '#a855f7' : '#f43f5e';
-            ctx.beginPath();
-            ctx.arc(e.x, e.y, e.r, 0, Math.PI * 2);
-            ctx.fill();
-        }
+        ctx.fillStyle = '#f8fafc';
+        ctx.beginPath();
+        ctx.arc(0, -48, 12, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#0284c7';
+        ctx.fillRect(2, -50, 10, 5);
+
+        ctx.restore();
     }
 
+    // =========================================================================
+    // 9. ARENA TAG ROYALE (Hex Grid Floor, Dash Trails & 3D Golden Crown)
+    // =========================================================================
     renderCrownRoyale(ctx) {
         const ms = this.modeState;
-        ctx.fillStyle = '#0b0f1d';
+        const time = this.timeElapsed;
+
+        ctx.fillStyle = '#070a14';
         ctx.fillRect(0, 0, this.width, this.height);
 
-        ctx.fillStyle = '#1e293b';
-        ctx.fillRect(0, 485, this.width, 55);
-        for (const plat of ms.platforms) {
-            ctx.fillStyle = '#4f46e5';
-            ctx.fillRect(plat.x, plat.y, plat.w, plat.h);
+        ctx.strokeStyle = 'rgba(56, 189, 248, 0.12)';
+        ctx.lineWidth = 1.5;
+        for (let x = 0; x < this.width; x += 60) {
+            for (let y = 0; y < this.height; y += 52) {
+                ctx.strokeRect(x, y, 60, 52);
+            }
         }
 
-        if (ms.empVisual > 0) {
-            ctx.strokeStyle = '#38bdf8';
-            ctx.lineWidth = 4;
+        for (const plat of ms.platforms) {
+            ctx.save();
+            this.drawGlow(ctx, plat.x + plat.w / 2, plat.y + 8, 30, '#4f46e5', 0.5);
+            ctx.fillStyle = '#1e1b4b';
             ctx.beginPath();
-            ctx.arc(ms.racers[0].x, ms.racers[0].y, 165 * (1 - ms.empVisual * 2), 0, Math.PI * 2);
+            ctx.roundRect(plat.x, plat.y, plat.w, plat.h, 6);
+            ctx.fill();
+            ctx.strokeStyle = '#6366f1';
+            ctx.lineWidth = 2;
             ctx.stroke();
+            ctx.restore();
         }
 
         ms.racers.forEach((r, idx) => {
-            ctx.fillStyle = r.color;
+            ctx.save();
+            this.drawDropShadow(ctx, r.x, r.y + 16, 22, 8, 0.45);
+
+            const runnerGrad = ctx.createLinearGradient(r.x, r.y - 28, r.x, r.y + 8);
+            runnerGrad.addColorStop(0, r.color);
+            runnerGrad.addColorStop(1, '#090d16');
+            ctx.fillStyle = runnerGrad;
             ctx.beginPath();
-            ctx.roundRect(r.x - 18, r.y - 36, 36, 36, 8);
+            ctx.roundRect(r.x - 16, r.y - 32, 32, 40, 8);
             ctx.fill();
 
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(r.x - 8, r.y - 26, 16, 5);
+
             if (ms.crownHolder === idx) {
-                ctx.fillStyle = '#fbbf24';
+                const crownY = r.y - 48 + Math.sin(time * 5) * 5;
+                this.drawGlow(ctx, r.x, crownY, 32, '#fbbf24', 0.85);
+
+                ctx.fillStyle = '#f59e0b';
                 ctx.beginPath();
-                ctx.arc(r.x, r.y - 48, 10, 0, Math.PI * 2);
+                ctx.moveTo(r.x - 16, crownY + 8);
+                ctx.lineTo(r.x - 16, crownY - 12);
+                ctx.lineTo(r.x - 8, crownY - 2);
+                ctx.lineTo(r.x, crownY - 14);
+                ctx.lineTo(r.x + 8, crownY - 2);
+                ctx.lineTo(r.x + 16, crownY - 12);
+                ctx.lineTo(r.x + 16, crownY + 8);
+                ctx.closePath();
+                ctx.fill();
+
+                ctx.fillStyle = '#ef4444';
+                ctx.beginPath();
+                ctx.arc(r.x, crownY - 4, 3, 0, Math.PI * 2);
                 ctx.fill();
             }
 
-            ctx.font = '700 11px "Outfit", sans-serif';
+            ctx.font = '800 12px "Outfit", sans-serif';
             ctx.fillStyle = '#ffffff';
             ctx.textAlign = 'center';
-            ctx.fillText(`${r.name} (${Math.round(r.pts)})`, r.x, r.y - 62);
+            ctx.fillText(r.name + ' (' + Math.round(r.pts) + ')', r.x, r.y - 42);
+
+            ctx.restore();
         });
     }
 
+    // =========================================================================
+    // 10. PRISM BREAKER OVERDRIVE (Crystalline Bricks, Glass Bevels & Plasma Ball)
+    // =========================================================================
     renderPrismBreaker(ctx) {
         const ms = this.modeState;
-        ctx.fillStyle = '#090d1a';
+
+        const bgGrad = ctx.createLinearGradient(0, 0, 0, this.height);
+        bgGrad.addColorStop(0, '#040712');
+        bgGrad.addColorStop(1, '#0f172a');
+        ctx.fillStyle = bgGrad;
         ctx.fillRect(0, 0, this.width, this.height);
 
         for (const br of ms.bricks) {
-            ctx.fillStyle = br.color;
+            ctx.save();
+            const bGrad = ctx.createLinearGradient(br.x, br.y, br.x, br.y + br.h);
+            bGrad.addColorStop(0, br.color);
+            bGrad.addColorStop(1, '#090d16');
+            ctx.fillStyle = bGrad;
             ctx.beginPath();
-            ctx.roundRect(br.x, br.y, br.w, br.h, 5);
+            ctx.roundRect(br.x, br.y, br.w, br.h, 6);
             ctx.fill();
+
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.45)';
+            ctx.fillRect(br.x + 3, br.y + 2, br.w - 6, 3);
+
+            ctx.strokeStyle = br.color;
+            ctx.lineWidth = 1.2;
+            ctx.stroke();
+            ctx.restore();
         }
 
-        for (const l of this.projectiles) {
-            ctx.fillStyle = '#38bdf8';
-            ctx.fillRect(l.x - 2, l.y - 10, 4, 18);
-        }
+        ctx.save();
+        this.drawDropShadow(ctx, ms.paddleX + ms.paddleW / 2, this.height - 30, ms.paddleW / 2, 8, 0.45);
 
-        ctx.fillStyle = '#38bdf8';
+        const padGrad = ctx.createLinearGradient(ms.paddleX, 0, ms.paddleX + ms.paddleW, 0);
+        padGrad.addColorStop(0, '#0284c7');
+        padGrad.addColorStop(0.5, '#7dd3fc');
+        padGrad.addColorStop(1, '#0284c7');
+        ctx.fillStyle = padGrad;
         ctx.beginPath();
         ctx.roundRect(ms.paddleX, this.height - 48, ms.paddleW, 16, 8);
         ctx.fill();
 
+        this.drawGlow(ctx, ms.paddleX + ms.paddleW / 2, this.height - 40, 28, '#38bdf8', 0.8);
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath();
+        ctx.arc(ms.paddleX + ms.paddleW / 2, this.height - 40, 4, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+
         for (const b of ms.balls) {
-            ctx.fillStyle = '#fbbf24';
+            ctx.save();
+            this.drawGlow(ctx, b.x, b.y, 24, '#fbbf24', 0.9);
+            const ballGrad = ctx.createRadialGradient(b.x - 2, b.y - 2, 2, b.x, b.y, b.r);
+            ballGrad.addColorStop(0, '#ffffff');
+            ballGrad.addColorStop(0.5, '#fde047');
+            ballGrad.addColorStop(1, '#ea580c');
+            ctx.fillStyle = ballGrad;
             ctx.beginPath();
             ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2);
             ctx.fill();
+            ctx.restore();
         }
     }
 
+    // =========================================================================
+    // ESPORTS TACTICAL HUD & OVERLAYS
+    // =========================================================================
     renderHud(ctx) {
-        // Top Translucent Tactical Bar
-        ctx.fillStyle = 'rgba(9, 13, 24, 0.82)';
-        ctx.fillRect(0, 0, this.width, 54);
-        ctx.fillStyle = 'rgba(249, 115, 22, 0.35)';
-        ctx.fillRect(0, 53, this.width, 1);
+        ctx.save();
+        ctx.fillStyle = 'rgba(6, 11, 25, 0.88)';
+        ctx.fillRect(0, 0, this.width, 56);
+        ctx.fillStyle = 'rgba(255, 153, 0, 0.4)';
+        ctx.fillRect(0, 55, this.width, 1.5);
 
-        ctx.font = '800 16px "Outfit", sans-serif';
+        ctx.font = '900 16px "Outfit", sans-serif';
         ctx.fillStyle = '#ffffff';
         ctx.textAlign = 'left';
-        ctx.fillText(`SCORE: ${this.score.toLocaleString()}`, 20, 33);
+        ctx.fillText('SCORE: ' + this.score.toLocaleString(), 24, 34);
 
         ctx.fillStyle = '#fbbf24';
-        ctx.fillText(`BEST: ${this.highScore.toLocaleString()}`, 190, 33);
+        ctx.fillText('HI: ' + this.highScore.toLocaleString(), 190, 34);
 
         ctx.fillStyle = '#38bdf8';
-        ctx.fillText(`LVL ${this.level}`, 355, 33);
+        ctx.fillText('LVL ' + this.level, 330, 34);
 
         if (this.combo > 1) {
             ctx.fillStyle = '#f97316';
-            ctx.fillText(`${this.combo}x COMBO`, 440, 33);
+            ctx.fillText('⚡ ' + this.combo + 'x COMBO', 420, 34);
         }
 
-        // Health & Shield Bars
-        ctx.fillStyle = '#1e293b';
-        ctx.fillRect(this.width - 330, 14, 140, 12);
-        ctx.fillStyle = this.health > 35 ? '#22c55e' : '#ef4444';
-        ctx.fillRect(this.width - 330, 14, 140 * (this.health / 100), 12);
+        const hpX = this.width - 340;
+        ctx.fillStyle = 'rgba(15, 23, 42, 0.95)';
+        ctx.beginPath();
+        ctx.roundRect(hpX, 14, 150, 13, 4);
+        ctx.fill();
 
-        ctx.fillStyle = '#1e293b';
-        ctx.fillRect(this.width - 330, 30, 140, 8);
+        const hpPct = Math.max(0, this.health / 100);
+        const hpGrad = ctx.createLinearGradient(hpX, 0, hpX + 150, 0);
+        hpGrad.addColorStop(0, '#ef4444');
+        hpGrad.addColorStop(0.5, '#eab308');
+        hpGrad.addColorStop(1, '#22c55e');
+        ctx.fillStyle = hpGrad;
+        ctx.beginPath();
+        ctx.roundRect(hpX, 14, 150 * hpPct, 13, 4);
+        ctx.fill();
+
+        ctx.fillStyle = 'rgba(15, 23, 42, 0.95)';
+        ctx.beginPath();
+        ctx.roundRect(hpX, 31, 150, 8, 3);
+        ctx.fill();
         ctx.fillStyle = '#38bdf8';
-        ctx.fillRect(this.width - 330, 30, 140 * (this.shield / 100), 8);
+        ctx.beginPath();
+        ctx.roundRect(hpX, 31, 150 * (this.shield / 100), 8, 3);
+        ctx.fill();
 
-        ctx.font = '700 13px "Outfit", sans-serif';
-        ctx.fillStyle = '#e2e8f0';
+        ctx.font = '800 13px "Outfit", sans-serif';
+        ctx.fillStyle = '#f8fafc';
         ctx.textAlign = 'right';
-        ctx.fillText(`AMMO / NRG: ${Math.round(this.ammo)}`, this.width - 20, 33);
+        ctx.fillText('AMMO: ' + Math.round(this.ammo), this.width - 24, 34);
+        ctx.restore();
 
         if (this.bannerTimer > 0 && this.statusBanner) {
-            ctx.fillStyle = 'rgba(249, 115, 22, 0.92)';
-            ctx.fillRect(this.width / 2 - 220, 68, 440, 34);
-            ctx.font = '800 15px "Outfit", sans-serif';
+            ctx.save();
+            ctx.fillStyle = 'rgba(234, 88, 12, 0.95)';
+            ctx.beginPath();
+            ctx.roundRect(this.width / 2 - 220, 72, 440, 36, 8);
+            ctx.fill();
+            ctx.font = '900 15px "Outfit", sans-serif';
             ctx.fillStyle = '#ffffff';
             ctx.textAlign = 'center';
-            ctx.fillText(this.statusBanner, this.width / 2, 90);
+            ctx.fillText(this.statusBanner, this.width / 2, 95);
+            ctx.restore();
         }
     }
 
     renderOverlay(ctx) {
-        ctx.fillStyle = 'rgba(6, 9, 19, 0.84)';
+        ctx.save();
+        ctx.fillStyle = 'rgba(4, 7, 16, 0.88)';
         ctx.fillRect(0, 0, this.width, this.height);
 
         ctx.textAlign = 'center';
-        ctx.font = '900 42px "Outfit", sans-serif';
-        ctx.fillStyle = '#ffffff';
 
         if (this.state === 'start') {
-            ctx.fillText(this.gameName.toUpperCase(), this.width / 2, this.height / 2 - 55);
-            ctx.font = '600 17px "Inter", sans-serif';
+            ctx.font = '900 44px "Outfit", sans-serif';
+            ctx.fillStyle = '#ffffff';
+            ctx.shadowColor = 'rgba(255, 153, 0, 0.8)';
+            ctx.shadowBlur = 18;
+            ctx.fillText(this.gameName.toUpperCase(), this.width / 2, this.height / 2 - 50);
+
+            ctx.font = '700 16px "Outfit", sans-serif';
             ctx.fillStyle = '#94a3b8';
-            ctx.fillText('60FPS Interactive Action Engine • Web Audio SFX • Live Leaderboard Sync', this.width / 2, this.height / 2 - 15);
+            ctx.shadowBlur = 0;
+            ctx.fillText('NEXT-GEN 60FPS GRAPHICS • WEB AUDIO SFX • LIVE LEADERBOARD SYNC', this.width / 2, this.height / 2 - 10);
 
-            ctx.fillStyle = '#f97316';
+            const btnW = 280;
+            const btnH = 58;
+            const btnX = this.width / 2 - btnW / 2;
+            const btnY = this.height / 2 + 30;
+
+            const btnGrad = ctx.createLinearGradient(btnX, btnY, btnX, btnY + btnH);
+            btnGrad.addColorStop(0, '#f97316');
+            btnGrad.addColorStop(1, '#ea580c');
+            ctx.fillStyle = btnGrad;
             ctx.beginPath();
-            ctx.roundRect(this.width / 2 - 135, this.height / 2 + 20, 270, 56, 14);
+            ctx.roundRect(btnX, btnY, btnW, btnH, 14);
             ctx.fill();
-            ctx.font = '800 20px "Outfit", sans-serif';
+
+            ctx.font = '900 20px "Outfit", sans-serif';
             ctx.fillStyle = '#ffffff';
-            ctx.fillText('▶ CLICK TO START GAME', this.width / 2, this.height / 2 + 55);
+            ctx.fillText('▶ CLICK TO START GAME', this.width / 2, btnY + 36);
         } else if (this.state === 'paused') {
+            ctx.font = '900 42px "Outfit", sans-serif';
+            ctx.fillStyle = '#ffffff';
             ctx.fillText('GAME PAUSED', this.width / 2, this.height / 2 - 20);
-            ctx.font = '600 18px "Inter", sans-serif';
+            ctx.font = '700 18px "Outfit", sans-serif';
             ctx.fillStyle = '#fbbf24';
-            ctx.fillText('Click inside arena or press [P] to Resume', this.width / 2, this.height / 2 + 25);
+            ctx.fillText('Click arena or press [P] to Resume', this.width / 2, this.height / 2 + 25);
         } else if (this.state === 'gameover') {
-            ctx.fillStyle = '#f43f5e';
-            ctx.fillText('MISSION COMPLETE / GAME OVER', this.width / 2, this.height / 2 - 65);
-            ctx.font = '800 26px "Outfit", sans-serif';
-            ctx.fillStyle = '#fbbf24';
-            ctx.fillText(`FINAL SCORE: ${this.score.toLocaleString()} PTS  •  LEVEL ${this.level}`, this.width / 2, this.height / 2 - 15);
+            ctx.font = '900 40px "Outfit", sans-serif';
+            ctx.fillStyle = '#ef4444';
+            ctx.fillText('MISSION COMPLETE / GAME OVER', this.width / 2, this.height / 2 - 60);
 
+            ctx.font = '900 26px "Outfit", sans-serif';
+            ctx.fillStyle = '#fbbf24';
+            ctx.fillText('FINAL SCORE: ' + this.score.toLocaleString() + ' PTS  •  LEVEL ' + this.level, this.width / 2, this.height / 2 - 10);
+
+            const btnW = 260;
+            const btnH = 54;
+            const btnX = this.width / 2 - btnW / 2;
+            const btnY = this.height / 2 + 35;
             ctx.fillStyle = '#f97316';
             ctx.beginPath();
-            ctx.roundRect(this.width / 2 - 135, this.height / 2 + 22, 270, 54, 14);
+            ctx.roundRect(btnX, btnY, btnW, btnH, 14);
             ctx.fill();
-            ctx.font = '800 19px "Outfit", sans-serif';
+
+            ctx.font = '900 19px "Outfit", sans-serif';
             ctx.fillStyle = '#ffffff';
-            ctx.fillText('↻ PLAY AGAIN [R]', this.width / 2, this.height / 2 + 56);
+            ctx.fillText('↻ PLAY AGAIN [R]', this.width / 2, btnY + 34);
         }
+        ctx.restore();
     }
 }
 
